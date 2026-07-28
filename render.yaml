@@ -1,10 +1,10 @@
 # Render blueprint for Crossprint. Deploy with: New > Blueprint, point at this repo.
 #
 # One worker, two threads, and only one conversion at a time (enforced in
-# web/app.py). Measured: converting a 131 MB project peaks at 197 MB RSS. A
-# second worker would double that on a 512 MB instance for no throughput gain,
-# since the work is memory-bound rather than IO-bound. The extra thread exists
-# so page loads and the health check stay responsive during a conversion.
+# web/app.py). Conversion streams parts rather than loading them, so peak RSS is
+# flat in project size -- 74 MB for a 726 MB project. The second worker is still
+# not worth it on a 512 MB instance; the extra thread exists so page loads and
+# the health check stay responsive during a conversion.
 services:
   - type: web
     name: crossprint
@@ -16,12 +16,19 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.6"
-      # Ceilings sized for the free tier's 512 MB. Raise both together if the
-      # instance is upgraded; see web/app.py for what they actually bound.
+      # These override web/app.py's defaults, so they are what actually applies
+      # in production -- changing the code defaults alone does nothing here.
+      #
+      # The upload cap is not about memory: uploads spool to disk, and peak RSS
+      # is flat in project size. It bounds how long a request may sit streaming
+      # in.
       - key: MAX_UPLOAD_MB
-        value: "80"
+        value: "300"
+      # Uncompressed size no longer predicts memory use, so this is only a
+      # zip-bomb backstop. Geometry compresses ~6x, so a 95 MB upload can
+      # legitimately hold well over 500 MB of meshes.
       - key: MAX_UNCOMPRESSED_MB
-        value: "220"
+        value: "3072"
       # Optional tip jar. Set a link here (Ko-fi, Buy Me a Coffee, GitHub
       # Sponsors...) and a support button appears; leave it out and there is
       # no button at all.
