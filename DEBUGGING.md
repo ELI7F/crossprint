@@ -140,3 +140,48 @@ Ordered by expected value.
 - **Range clamping instead of replacement.** Out-of-range values currently fall
   back to the target's value; clamping to the nearest bound would sometimes
   preserve intent better (e.g. `-1` → `0`).
+
+## Memory: stream, don't load (2026-07-28)
+
+The hosted converter refused any project over 220 MB uncompressed. The cap looked
+like a hosting constraint -- 512 MB container, measured 1.5x peak-to-uncompressed
+ratio, do the arithmetic -- so it had been treated as a fact to document rather
+than a bug to fix. It was a bug.
+
+Measuring where the bytes actually were took one command and reframed the whole
+problem:
+
+    total uncompressed: 726 MB
+    geometry (.model):  725 MB  (100% of the archive)
+    everything else:      1 MB
+
+Conversion rewrites `3D/3dmodel.model` (build transforms, small), and two config
+parts. The 32 object meshes carrying essentially all the bytes are never touched.
+The old code read all of them into a dict of `bytes` on open and re-encoded all of
+them on write -- a gigabyte of work to change a few hundred kilobytes.
+
+`core/archive.py` now opens the container without reading any part, fetches parts
+on demand (caching only the small ones), and on write copies anything the caller
+never replaced straight from source to output in 1 MiB chunks. Uploads use
+Werkzeug's already-spooled stream instead of `.read()`, and results spool too.
+726 MB project: >1 GB peak and never completing, to **74 MB peak in 12 s**. A
+66 MB project peaks at 70 MB -- cost is flat in project size now.
+
+Two things worth carrying:
+
+**Measure the distribution, not the total.** "The project is 726 MB" and "726 MB
+of it is in parts we don't modify" lead to completely different fixes. The first
+says buy a bigger container; the second says stop reading them.
+
+**A chunked scanner needs an exact boundary rule, not a big-enough window.** The
+first chunked paint scan retained a fixed-size tail so attributes spanning a chunk
+boundary would still be seen whole. That silently drops any attribute longer than
+the window, and split-triangle paint codes have no fixed upper bound -- real files
+carry 180-character ones. It lost 15 codes on the 8-colour sample and reported no
+error, because a scanner that misses input just returns a smaller count. Cutting
+the tail at the last *unterminated* attribute is exact at any length. The test
+runs it at a 97-byte chunk size, smaller than the codes it must not lose.
+
+`tests/test_streaming.py` asserts the memory ceiling, byte-identical mesh
+pass-through, and that boundary case, because a stray `get_bytes` in a loop over
+geometry would restore the old behaviour without failing anything else.
