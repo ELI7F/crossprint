@@ -1,0 +1,5 @@
+pyyaml>=6.0
+pytest>=8.0
+flask>=3.0
+# Production WSGI server (Linux hosts); the local runner uses Flask's own.
+gunicorn>=21.2

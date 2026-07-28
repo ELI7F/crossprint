@@ -1,0 +1,128 @@
+# Debugging playbook
+
+Everything in this file was learned the expensive way, converting a real
+project between Snapmaker Orca and Bambu Studio. If a converted file misbehaves,
+start here rather than re-deriving it.
+
+## The one rule
+
+**Run the slicer. Don't reason about the file.**
+
+Four consecutive fixes in this project were derived by careful analysis of the
+`.3mf` contents. All four were wrong — each explained the symptom plausibly,
+and each shipped a file that still failed. The fifth attempt opened Bambu
+Studio, and the real cause fell out in minutes.
+
+Analysis is for *narrowing* a hypothesis you can then test in the application.
+It is not evidence.
+
+## Getting ground truth
+
+The single highest-value technique: **make the slicer author the answer.**
+
+1. Build a file that *does* load — usually our geometry plus a known-good
+   config lifted verbatim from a real project for that printer.
+2. Open it in the target slicer.
+3. **File → Save Project As.**
+
+That output is a complete, valid project, written by the slicer itself, for the
+exact printer and geometry in question. Diffing our config against it answers
+questions that no amount of format reasoning can:
+
+- which keys the slicer expects to be present,
+- what array widths it actually uses (these are version-dependent),
+- which of our keys it never writes at all.
+
+## Bisecting a rejected file
+
+Both slicers reject a bad config with a single unhelpful message, so bisect.
+
+Two harness shapes, and the trap in each:
+
+- **Overlay** our keys onto a known-good config, half at a time. Trap: keys
+  whose length tracks the filament count. Mixing our 4-filament arrays into a
+  6-filament config produces a state no real conversion emits, and the bisection
+  then chases an artifact. Move every count-dependent key as one block —
+  including `flush_volumes_matrix`, which is `filament_count²` per extruder
+  despite not being `filament_`-prefixed.
+- **Remove** keys from our own config, half at a time. Trap: strip far enough
+  and the loader fails for want of something required, which looks like a hit
+  but isn't.
+
+Cross-check any culprit both ways before believing it.
+
+## What is fatal vs. survivable
+
+From `ConfigBase::load_from_json` and `set_deserialize_raw` in the slicer's own
+source (`src/libslic3r/Config.cpp`):
+
+| Condition | Result |
+|---|---|
+| Unknown key, after `handle_legacy` renames and its obsolete-key ignore list | **throws** |
+| Value that won't parse for the option's declared type | **throws** |
+| Bad `coEnum` / `coEnums` / `coBool` value | survivable — falls back to the option default, logs a substitution |
+| Numeric value outside `def->min`/`def->max` | **silent** — the slicer reports "invalid values found" and quietly uses its own defaults |
+
+Any throw is caught, `load_from_json` returns -1, and the import aborts *before
+the model is read*. That is why a config error surfaces as **"The file does not
+contain any geometry data"** even when the geometry part is byte-for-byte
+identical to the source's. Do not chase the geometry when you see that message —
+check the config first.
+
+The silent range case is the nastiest: the file opens, nothing looks broken, and
+the user's settings simply aren't there.
+
+## Where the forks disagree
+
+Five levels, all enforced by `core/vocabulary.py`, `core/shapes.py` and
+`tools/extract_vocabulary.py`, which scrape each fork's `PrintConfig.cpp`:
+
+1. **Names** — Orca defines ~250 settings Bambu has never heard of.
+2. **Values** — same option, different enum vocabulary. Map by the *label*:
+   Bambu's `zig-zag` is labelled "Rectilinear", which is Orca's value.
+3. **Types** — `skeleton_infill_line_width` is `coFloatOrPercent` in Orca
+   (holding `"100%"`) and plain `coFloat` in Bambu, which throws on it.
+4. **Arity** — `travel_speed` is one number in Orca, one per extruder in Bambu.
+5. **Ranges** — `prime_tower_brim_width: -1` means "auto" to Bambu; Orca
+   requires ≥ 0.
+
+Re-run `tools/extract_vocabulary.py` after any slicer update; all five checks
+are data-driven from it.
+
+## The division of labour
+
+**We own the model, the colours and the print recipe. The slicer owns the
+machine.**
+
+Nozzle variants, per-extruder kinematics, AMS routing and purge matrices are
+deliberately *omitted* (`core/slicer_owned.py`) rather than computed. Their
+widths depend on how the installed slicer pairs printer variants with each
+filament's compatibility, and they change between versions — one Bambu Studio
+build writes 5 nozzle variants and 17 per-filament entries for 6 filaments where
+an older sample has 4 and 12. Every attempt to synthesise them failed; omitting
+them works, because the slicer fills them from its own presets for the printer
+we name.
+
+The same restraint applies to `different_settings_to_system`. Marking all 36
+settings that differed loaded the config but produced no geometry; scoping it to
+a curated recipe allowlist (`convert/settings_diff.py`) loads correctly with the
+user's values applied. Claim only what the user actually chose.
+
+## Future work
+
+Ordered by expected value.
+
+- **Verify more models.** Only U1, H2C, H2D and A1 mini are checked against real
+  project files; the other 11 warn that they're unverified. The cheapest way to
+  promote one is the *Save Project As* trick above — no sample file needed, just
+  the printer selected in the slicer.
+- **Settings-conflict cleanup.** A converted majorasmask project triggers "Ooze
+  prevention is not supported with the prime tower enabled" — a real conflict
+  carried over from the source. Worth detecting and resolving these pairs.
+- **AMS-less and second-extruder-group routing** for the Vortek family, and
+  non-0.4 mm nozzle targets. All currently error out rather than guess.
+- **Colour-merge fallback** when a source exceeds the target's capacity, instead
+  of the current hard error.
+- **Range clamping instead of replacement.** Out-of-range values currently fall
+  back to the target's value; clamping to the nearest bound would sometimes
+  preserve intent better (e.g. `-1` → `0`).

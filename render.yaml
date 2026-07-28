@@ -1,0 +1,29 @@
+# Render blueprint for Crossprint. Deploy with: New > Blueprint, point at this repo.
+#
+# One worker, two threads, and only one conversion at a time (enforced in
+# web/app.py). Measured: converting a 131 MB project peaks at 197 MB RSS. A
+# second worker would double that on a 512 MB instance for no throughput gain,
+# since the work is memory-bound rather than IO-bound. The extra thread exists
+# so page loads and the health check stay responsive during a conversion.
+services:
+  - type: web
+    name: crossprint
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --chdir web app:app --workers 1 --threads 2 --timeout 180 --bind 0.0.0.0:$PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.6"
+      # Ceilings sized for the free tier's 512 MB. Raise both together if the
+      # instance is upgraded; see web/app.py for what they actually bound.
+      - key: MAX_UPLOAD_MB
+        value: "80"
+      - key: MAX_UNCOMPRESSED_MB
+        value: "220"
+      # Optional tip jar. Set a link here (Ko-fi, Buy Me a Coffee, GitHub
+      # Sponsors...) and a support button appears; leave it out and there is
+      # no button at all.
+      # - key: DONATE_URL
+      #   value: https://ko-fi.com/yourname
