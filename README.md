@@ -59,7 +59,7 @@ mounted toolheads) print to stderr; the file is still written.
 .venv/Scripts/python -m pytest
 ```
 
-167 tests, run against real `.3mf` files rather than synthetic fixtures —
+173 tests, run against real `.3mf` files rather than synthetic fixtures —
 `tests/conftest.py` points at the user's own Downloads folder and skips
 gracefully if a given sample isn't present.
 
@@ -87,6 +87,7 @@ convert/            the actual conversion logic
                        slicer honors the source's recipe, not the target's defaults
   filament_variants.py per-extruder-variant expansion of per-filament settings
   plate_layout.py     re-places objects on the target's bed (multi-plate safe)
+  layer_heights.py    clamps a variable layer-height profile into the target's range
   pipeline.py         model registry + parse -> classify -> map colors -> build -> write
 
 profiles/           vendored official system presets (see SOURCES.md for exact commits)
@@ -155,6 +156,13 @@ fails loudly vs. silently) and the ranked future-work list.
   boundary" and refuses to slice. `convert/plate_layout.py` re-places each
   object using Bambu's own layout rule from `PartPlate.cpp`, keeping it on the
   plate the user chose.
+- **A profile the target can't fully honour is discarded whole, so clamp it
+  rather than hand it over intact.** A variable layer-height profile is only
+  valid inside the printer's nozzle range — 0.32 mm on a U1, 0.28 on an H2C —
+  and one out-of-range point makes the slicer throw away the entire profile.
+  `convert/layer_heights.py` clamps the offending points instead: on the
+  project that prompted it, 81 of 429 points were out of range, so clamping
+  kept the other 348 exactly as designed.
 - **We own the model, the colours and the print recipe; the slicer owns the
   machine.** Nozzle variants, per-extruder kinematics, AMS routing and purge
   matrices cannot be synthesised from static data: their widths depend on how

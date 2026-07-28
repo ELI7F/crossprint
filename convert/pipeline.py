@@ -18,6 +18,7 @@ from pathlib import Path
 from convert.color_mapping import map_colors_to_bambu, map_colors_to_u1, remap_object_extruders
 from convert.filament_mapping import map_filaments_to_target
 from convert.filament_variants import expand_per_variant_options
+from convert.layer_heights import clamp_layer_height_profile
 from convert.paint_transfer import remap_paint_colors
 from convert.plate_layout import bed_size, relayout_for_target_bed
 from convert.settings_diff import compute_different_settings_to_system
@@ -379,6 +380,18 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
             f"{MODEL_REGISTRY[target]}'s bed."
         )
     result.warnings.extend(layout.warnings)
+
+    # An adaptive layer-height profile is only valid within the target's own
+    # nozzle range; leave one height out of bounds and the slicer throws the
+    # whole profile away -- see convert/layer_heights.py.
+    heights = clamp_layer_height_profile(archive, flat_target_machine)
+    if heights.points_clamped:
+        low, high = heights.allowed
+        result.warnings.append(
+            f"clamped {heights.points_clamped} of {heights.points_total} variable layer-height point(s) "
+            f"into {MODEL_REGISTRY[target]}'s {low:g}-{high:g} mm range (highest was {heights.extreme:.3f} mm); "
+            "the rest of the profile is preserved."
+        )
 
     paint_report = remap_paint_colors(archive, mapping.slot_map, max_target_slot=result.filament_count)
     if paint_report.out_of_range:
