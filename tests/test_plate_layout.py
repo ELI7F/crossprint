@@ -93,6 +93,29 @@ def test_objects_stay_on_the_plate_the_user_put_them_on():
     assert object_plate_index(archive.get_text("Metadata/model_settings.config")) == source_plates
 
 
+@pytest.mark.parametrize(
+    "source_name,target",
+    [("a1mini_woody", "u1"), ("a1mini_woody", "h2c"), ("u1_majorasmask", "a1-mini")],
+)
+def test_every_object_anchor_lands_on_its_own_plate(source_name, target):
+    """Holds in both directions, including onto a smaller bed. Anchors landing
+    on-plate is what the slicer's boundary check reacts to; a very large model
+    can still overhang, which is what the shrink warning is for."""
+    archive, _ = convert(sample_path(source_name), target)
+    bed = _bed_of(archive)
+    plate_of = object_plate_index(archive.get_text("Metadata/model_settings.config"))
+    cols = column_count(max(plate_of.values()) + 1)
+
+    for object_id, (x, y) in _item_positions(archive).items():
+        index = plate_of.get(object_id)
+        if index is None:
+            continue
+        row, col = divmod(index, cols)
+        local = (x - col * bed[0] * 1.2, y + row * bed[1] * 1.2)
+        assert 0 <= local[0] <= bed[0], (source_name, target, object_id, local)
+        assert 0 <= local[1] <= bed[1], (source_name, target, object_id, local)
+
+
 def test_conversion_reports_the_replacement():
     _, result = convert(sample_path("a1mini_woody"), "h2c")
     assert any("re-placed" in w and "plate" in w for w in result.warnings), result.warnings
@@ -105,7 +128,16 @@ def test_shrinking_bed_is_flagged():
     assert any("smaller" in w for w in result.warnings), result.warnings
 
 
-@pytest.mark.parametrize("source_name,target", [("u1_majorasmask", "h2c"), ("u1_toucan_plus", "h2c")])
+@pytest.mark.parametrize(
+    "source_name,target",
+    [
+        ("u1_majorasmask", "h2c"),
+        ("u1_toucan_plus", "h2c"),
+        ("a1mini_woody", "u1"),      # 11 plates onto a bigger bed, verified in Snapmaker Orca
+        ("a1mini_woody", "h2c"),     # ...and onto a bigger one still, verified in Bambu Studio
+        ("u1_majorasmask", "a1-mini"),  # 9 plates onto a *smaller* bed
+    ],
+)
 def test_single_and_multi_plate_projects_both_survive(source_name, target):
     source = ThreeMFArchive.open(sample_path(source_name))
     archive, _ = convert(sample_path(source_name), target)
