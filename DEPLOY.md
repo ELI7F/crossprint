@@ -68,6 +68,25 @@ click at once. Page loads and health checks respond during a conversion; a
 request that waits more than two minutes for its turn gets a "busy, try again"
 response.
 
+### Two traps when changing the limits
+
+**The `envVars` in `render.yaml` override `web/app.py`'s defaults.** Changing the
+code defaults alone does nothing in production -- the streaming work above
+shipped and the live server still refused anything over the old 80 MB, because
+the blueprint was still pinning it. Change both, or neither.
+
+**A Blueprint deployed from a public repo URL does not always pick up a new
+commit on *Manual sync*.** Render's cached clone can stay behind and the button
+completes without creating a sync. Saving anything on the service's Environment
+page triggers a deploy that clones fresh at the current commit, which is a
+reliable way to force it. Connecting the GitHub account removes the problem
+altogether by enabling auto-deploy.
+
+Verified end to end after both were fixed: a 122 MB / 726 MB-uncompressed
+11-plate project uploaded to the live instance returned HTTP 200 with a valid
+H2C project -- 32 meshes, 10 filaments, 11 plates re-placed -- in 166 s
+including both transfers.
+
 Raise both limits together if you move to a larger instance. Nothing else needs
 changing.
 
