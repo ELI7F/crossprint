@@ -46,7 +46,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    archive.write(output)
+    try:
+        archive.write(output)
+    finally:
+        archive.close()  # the source container stays open until the copy is done
 
     print(f"{args.input.name}: {result.source_vendor} -> {result.target_vendor}, {result.filament_count} color(s)")
     for warning in result.warnings:

@@ -33,28 +33,40 @@ Render redeploy on every push.
 
 ## Why the limits are what they are
 
-A `.3mf` is a zip, and conversion holds the entire uncompressed project in
-memory. Measured on the largest real sample: a 20 MB upload expands to 131 MB
-of geometry and peaks at **197 MB RSS**, about 1.5× the uncompressed size, plus
-~25 MB for the interpreter and preset library.
+Conversion does **not** hold the project in memory. `core/archive.py` reads
+parts lazily and streams anything it doesn't modify straight from the source
+container into the output, a megabyte at a time, so peak memory is set by the
+largest part actually rewritten rather than by the size of the project.
 
-On a 512 MB instance that gives:
+Measured on the largest real sample -- an 11-plate, 122 MB upload that expands
+to **726 MB** of geometry across 32 object meshes:
+
+| | Before streaming | Now |
+|---|---|---|
+| Peak RSS | >1 GB (never completed on a 512 MB box) | **74 MB** |
+| Time | -- | 12 s |
+
+A 66 MB project peaks at 70 MB and the 726 MB one at 74 MB: the cost is
+essentially flat, because only `3D/3dmodel.model` and the ~1 MB of config parts
+are ever rewritten. The 32 object meshes pass through byte-for-byte identical,
+which `tests/test_streaming.py` asserts along with the memory ceiling itself.
 
 | Setting | Hosted default | Local |
 |---|---|---|
-| `MAX_UPLOAD_MB` | 80 | 300 |
-| `MAX_UNCOMPRESSED_MB` | 220 | 1024 |
+| `MAX_UPLOAD_MB` | 300 | 2048 |
+| `MAX_UNCOMPRESSED_MB` | 3072 | 16384 |
 
-220 MB uncompressed predicts a ~355 MB peak, leaving real headroom. The
-uncompressed figure is read from the zip directory *before* any data is loaded,
-so an oversized project is refused with a clear message instead of taking the
-container down.
+These are now guards rather than predictions -- against a zip bomb, and against
+an upload so large it would sit in the request for minutes. The uncompressed
+figure is read from the zip directory *before* any data is loaded, so an
+oversized project is refused with a clear message instead of taking the
+container down. The worker timeout is 600 s to cover a slow upload of a
+large project, not because conversion itself is slow.
 
-Conversions are also serialised — one at a time, regardless of how many people
-click at once — because the work is memory-bound, not IO-bound. A second
-concurrent conversion would double peak usage for no throughput gain. Page
-loads and health checks still respond during a conversion; a request that waits
-more than two minutes for its turn gets a "busy, try again" response.
+Conversions are still serialised -- one at a time, regardless of how many people
+click at once. Page loads and health checks respond during a conversion; a
+request that waits more than two minutes for its turn gets a "busy, try again"
+response.
 
 Raise both limits together if you move to a larger instance. Nothing else needs
 changing.

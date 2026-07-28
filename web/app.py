@@ -7,12 +7,16 @@ module serves both cases.
 Both endpoints are thin wrappers around convert/pipeline.py; all the actual
 conversion logic and its test coverage live there, same as cli.py.
 
-Size limits exist because a .3mf is a zip and conversion holds the whole thing
-uncompressed in memory. Measured on the largest real sample: a 20 MB upload
-expands to 131 MB of geometry and peaks at 197 MB RSS, about 1.5x the
-uncompressed size. A 512 MB container -- the usual free tier -- cannot survive
-an unbounded upload, so the uncompressed size is checked up front from the zip
-directory rather than discovered by running out of memory.
+Size limits still exist, but they no longer follow from the project's size.
+core/archive.py streams every part conversion doesn't modify straight from the
+source container to the output, and uploads and results are spooled rather than
+buffered, so cost is flat: an 11-plate, 726 MB project peaks at 74 MB, a 66 MB
+one at 70 MB. That is the difference between working on a small container and
+not.
+
+The remaining ceilings are guards, not predictions, and the uncompressed one is
+checked up front from the zip directory rather than discovered by running out
+of memory.
 """
 from __future__ import annotations
 
@@ -21,9 +25,10 @@ import os
 import sys
 import webbrowser
 import zipfile
-from io import BytesIO
 from pathlib import Path
+from tempfile import SpooledTemporaryFile
 from threading import Semaphore, Timer
+from typing import BinaryIO
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -45,16 +50,18 @@ _HOSTED = "PORT" in os.environ
 HOST = "0.0.0.0" if _HOSTED else "127.0.0.1"  # noqa: S104 -- binding publicly is the point when hosted
 PORT = int(os.environ.get("PORT", 5000))
 
-# Compressed upload cap. Generous locally; hosted, it's a first-pass filter
-# and the uncompressed ceiling below is what actually protects the container.
-MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "80" if _HOSTED else "300")) * 1024 * 1024
+# Compressed upload cap. Uploads spool to disk rather than RAM, so this bounds
+# request time and disk use, not memory.
+MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "300" if _HOSTED else "2048")) * 1024 * 1024
 
-# Uncompressed ceiling, set from measurement rather than guesswork: converting
-# a 131 MB project peaks at 197 MB RSS, i.e. ~1.5x the uncompressed size plus
-# ~25 MB of interpreter and preset library. At 220 MB that predicts a ~355 MB
-# peak, leaving useful headroom on a 512 MB instance -- and _CONVERSION_SLOT
-# below guarantees only one conversion is in flight to spend it.
-MAX_UNCOMPRESSED_BYTES = int(os.environ.get("MAX_UNCOMPRESSED_MB", "220" if _HOSTED else "1024")) * 1024 * 1024
+# Uncompressed ceiling. Since parts stream through, total project size no longer
+# predicts peak memory -- the largest single part does, and _CONVERSION_SLOT
+# guarantees one conversion at a time. This stays as a backstop against a zip
+# bomb and against a project whose individual meshes are pathologically large.
+MAX_UNCOMPRESSED_BYTES = int(os.environ.get("MAX_UNCOMPRESSED_MB", "3072" if _HOSTED else "16384")) * 1024 * 1024
+
+# Above this, a converted result goes to a temp file instead of staying in RAM.
+_SPOOL_TO_DISK_BYTES = 8 * 1024 * 1024
 
 # Conversions are memory-heavy and short. Serialising them keeps peak usage at
 # one conversion's worth no matter how many people click at once, while the
@@ -107,17 +114,24 @@ def _uploaded_file():
     if not file.filename.lower().endswith(".3mf"):
         raise UploadRejected("That doesn't look like a .3mf file.")
 
-    buf = BytesIO(file.read())
-    _reject_if_too_large_uncompressed(buf)
-    return buf, file.filename
+    # Werkzeug has already spooled the upload -- to disk once it outgrows a few
+    # hundred KB -- so its stream is handed straight to the converter. Calling
+    # .read() here would copy the entire compressed project into RAM for no
+    # reason; on the largest real sample that alone was over 100 MB.
+    stream = file.stream
+    stream.seek(0)
+    _reject_if_too_large_uncompressed(stream)
+    return stream, file.filename
 
 
-def _reject_if_too_large_uncompressed(buf: BytesIO) -> None:
+def _reject_if_too_large_uncompressed(buf: BinaryIO) -> None:
     """Check the zip directory before loading anything.
 
-    A .3mf's compressed size says little about what conversion will cost: the
-    geometry part compresses ~7x, so a modest upload can still exhaust the
-    container. The directory gives the real figure without reading the data.
+    Geometry compresses about 6x, so the upload size says little about what is
+    inside -- the largest real sample is 122 MB on disk and 726 MB expanded.
+    Conversion streams rather than buffers, so that expansion is no longer a
+    memory problem, but the directory still gives the real figure for free and
+    is what a zip bomb would have to lie about.
     """
     try:
         with zipfile.ZipFile(buf) as zf:
@@ -199,8 +213,14 @@ def api_convert():
             "Run the tool locally -- it has no such limit."
         ), 507
     else:
-        output_buf = BytesIO()
-        archive.write(output_buf)  # assembling the zip is itself memory-heavy
+        # Spooled, not BytesIO: a converted project can be well over a hundred
+        # megabytes and there is no reason to hold it in RAM while the client
+        # downloads it. Small results never touch the disk at all.
+        output_buf = SpooledTemporaryFile(max_size=_SPOOL_TO_DISK_BYTES)
+        try:
+            archive.write(output_buf)
+        finally:
+            archive.close()  # releases the source container's file handle
         output_buf.seek(0)
         del archive
     finally:

@@ -149,11 +149,13 @@ def inspect_source(source_path: PathOrStream) -> SourceInfo:
     """Cheap peek at a .3mf's active printer/color config, without doing any
     conversion work -- used by the web UI to show what it detected and let
     the user pick a target before committing to a conversion."""
-    archive = ThreeMFArchive.open(source_path)
-    project_text = archive.get_text("Metadata/project_settings.config")
-    if project_text is None:
-        raise ValueError("no Metadata/project_settings.config -- not a slicer-saved 3mf project")
-    project = ProjectSettings.parse(project_text)
+    # Closed on the way out: inspection reads one small part, and leaving the
+    # container open would hold a file handle for a request that is done with it.
+    with ThreeMFArchive.open(source_path) as archive:
+        project_text = archive.get_text("Metadata/project_settings.config")
+        if project_text is None:
+            raise ValueError("no Metadata/project_settings.config -- not a slicer-saved 3mf project")
+        project = ProjectSettings.parse(project_text)
     vendor = detect_vendor(project)
     return SourceInfo(
         vendor=vendor,

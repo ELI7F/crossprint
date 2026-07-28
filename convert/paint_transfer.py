@@ -40,6 +40,47 @@ from core.archive import ThreeMFArchive
 
 _PAINT_COLOR_RE = re.compile(rb'paint_color="([0-9A-Fa-f]+)"')
 
+_SCAN_CHUNK = 4 << 20
+_ATTRIBUTE_START = b'paint_color="'
+# Just enough to hold an attribute *name* split across a read boundary; the
+# value's length is handled exactly, not by a window (see _iter_paint_codes).
+_SCAN_OVERLAP = len(_ATTRIBUTE_START)
+
+
+def _iter_paint_codes(archive: ThreeMFArchive, part_name: str):
+    """Yield every paint_color code in a part without holding the part.
+
+    A geometry part can be a hundred megabytes; reading it whole just to count
+    attributes was, before this, the single largest allocation a conversion
+    made.
+
+    The subtlety is the chunk boundary. An earlier version kept a fixed-size
+    tail so an attribute spanning two reads would still be seen whole -- which
+    quietly loses any attribute longer than that window, and split-triangle
+    codes have no fixed upper bound (real files carry 180-character ones). It
+    lost 15 codes on the 8-colour sample, and losing them is silent: the counts
+    simply come out low.
+
+    So the tail is cut at the last *unterminated* attribute instead. Everything
+    already matched is dropped, so nothing is yielded twice; everything that
+    might still be mid-attribute is retained however long it turns out to be,
+    so nothing is missed.
+    """
+    tail = b""
+    with archive.open_part(part_name) as stream:
+        while chunk := stream.read(_SCAN_CHUNK):
+            buffer = tail + chunk
+            consumed = 0
+            for match in _PAINT_COLOR_RE.finditer(buffer):
+                yield match.group(1)
+                consumed = match.end()
+
+            rest = buffer[consumed:]
+            start = rest.rfind(_ATTRIBUTE_START)
+            # An attribute opened but not yet closed: keep all of it. Otherwise
+            # keep only enough to reassemble a split attribute name.
+            tail = rest[start:] if start != -1 else rest[-_SCAN_OVERLAP :]
+
 
 def decode_leaf_paint_color(code: str) -> int | None:
     """1-indexed logical color slot for a leaf triangle's paint_color code,
@@ -87,11 +128,8 @@ def scan_paint_colors(archive: ThreeMFArchive) -> dict[int, int]:
     single slot."""
     counts: dict[int, int] = {}
     for part_name in geometry_part_names(archive):
-        data = archive.get_bytes(part_name)
-        if data is None:
-            continue
-        for m in _PAINT_COLOR_RE.finditer(data):
-            v = decode_leaf_paint_color(m.group(1).decode("ascii"))
+        for code in _iter_paint_codes(archive, part_name):
+            v = decode_leaf_paint_color(code.decode("ascii"))
             if v is not None:
                 counts[v] = counts.get(v, 0) + 1
     return counts
@@ -118,27 +156,39 @@ def remap_paint_colors(
     report = PaintTransferReport()
 
     for part_name in geometry_part_names(archive):
-        data = archive.get_bytes(part_name)
-        if data is None or b"paint_color=" not in data:
-            continue
-        report.parts_scanned.append(part_name)
-
-        def replace_in(match: re.Match, _part_name: str = part_name) -> bytes:
-            code = match.group(1).decode("ascii")
-            v = decode_leaf_paint_color(code)
+        # Survey the part in chunks first. This alone answers the report, and
+        # for an identity map -- the only kind convert/color_mapping.py
+        # currently produces -- it is the whole job, so a 100 MB mesh is never
+        # held in memory and core/archive.py streams it through untouched.
+        needs_rewrite = False
+        for raw_code in _iter_paint_codes(archive, part_name):
+            if part_name not in report.parts_scanned:
+                report.parts_scanned.append(part_name)
+            v = decode_leaf_paint_color(raw_code.decode("ascii"))
             if v is None:
                 report.split_codes_skipped += 1
-                return match.group(0)
+                continue
             report.leaf_codes_found += 1
             target_v = slot_map.get(v, v)
             if max_target_slot is not None and target_v > max_target_slot:
-                report.out_of_range.append((_part_name, target_v))
+                report.out_of_range.append((part_name, target_v))
+            if target_v != v:
+                needs_rewrite = True
+
+        if not needs_rewrite:
+            continue
+
+        def replace_in(match: re.Match) -> bytes:
+            v = decode_leaf_paint_color(match.group(1).decode("ascii"))
+            if v is None:
+                return match.group(0)
+            target_v = slot_map.get(v, v)
             if target_v == v:
                 return match.group(0)
             report.leaf_codes_remapped += 1
             return b'paint_color="' + encode_leaf_paint_color(target_v).encode("ascii") + b'"'
 
-        new_data = _PAINT_COLOR_RE.sub(replace_in, data)
-        archive.set_bytes(part_name, new_data)
+        data = archive.get_bytes(part_name)
+        archive.set_bytes(part_name, _PAINT_COLOR_RE.sub(replace_in, data))
 
     return report
