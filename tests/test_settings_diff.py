@@ -15,6 +15,7 @@ the target's own preset vocabulary.
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -170,3 +171,69 @@ def test_every_bambu_target_produces_a_well_formed_field(target):
     assert all(isinstance(e, str) for e in entries)
     for key in (k for k in entries[0].split(";") if k):
         assert key in config, (target, key)
+
+
+def test_every_real_difference_is_declared():
+    """Nothing that differs from the target's own print preset may go
+    undeclared.
+
+    An undeclared difference is invisible: the value sits in the file, the
+    slicer serves its preset's value instead, and nothing reports it. That is
+    exactly what a hand-picked filter used to cause -- 27 settings differed on a
+    real P1S project and 12 were declared, so the user's tuned speeds were
+    silently replaced by Snapmaker U1's. Confirmed in Snapmaker Orca before and
+    after the fix.
+    """
+    from convert.pipeline import _vendor_dir
+    from convert.settings_diff import _NOT_A_SETTING, _same_value
+    from core.preset_resolver import PresetLibrary, flatten
+
+    archive, _ = convert(sample_path("bambu_da_boss"), "u1")
+    buf = BytesIO()
+    try:
+        archive.write(buf)
+    finally:
+        archive.close()
+    buf.seek(0)
+    with ThreeMFArchive.open(buf) as out:
+        config = json.loads(out.get_text("Metadata/project_settings.config"))
+
+    library = PresetLibrary(_vendor_dir("u1"))
+    preset = flatten("process", library.get("process", config["print_settings_id"]), library)
+    declared = set(config["different_settings_to_system"][0].split(";"))
+
+    undeclared = sorted(
+        key
+        for key, preset_value in preset.items()
+        if key not in _NOT_A_SETTING
+        and key in config
+        and not _same_value(config[key], preset_value)
+        and key not in declared
+    )
+    assert undeclared == [], f"differ from the target preset but not declared: {undeclared}"
+
+
+def test_declared_keys_stay_inside_the_target_vocabulary():
+    """The rule that actually fixed loading: never name a key the target has
+    no equivalent for. Naming Snapmaker-only settings in a Bambu project made
+    Bambu Studio report the file as having no geometry at all."""
+    from core.vocabulary import load_vocabulary
+
+    for source, target, vendor in (
+        ("bambu_da_boss", "u1", "snapmaker_u1"),
+        ("u1_toucan_plus", "h2c", "bambu_h2c"),
+    ):
+        archive, _ = convert(sample_path(source), target)
+        buf = BytesIO()
+        try:
+            archive.write(buf)
+        finally:
+            archive.close()
+        buf.seek(0)
+        with ThreeMFArchive.open(buf) as out:
+            config = json.loads(out.get_text("Metadata/project_settings.config"))
+
+        vocabulary = load_vocabulary(Path(__file__).parent.parent / "profiles" / vendor)
+        for section in config["different_settings_to_system"]:
+            for key in filter(None, section.split(";")):
+                assert key in vocabulary, f"{source}->{target} declares {key!r}, which {target} doesn't define"

@@ -33,6 +33,12 @@ SAMPLES = {
     # bug -- Bambu Studio rejected the output as "Invalid configuration file"
     # (see convert/color_mapping.py's _H2C_VERIFIED_MACHINE_FIELDS).
     "u1_toucan_plus": DOWNLOADS / "Toucan-Plus by Rocket Luo.3mf",
+    # A Bambu P1S project whose owner had tuned speeds and accelerations well
+    # away from the stock preset. Converting it to U1 is what exposed the
+    # hand-picked recipe filter in convert/settings_diff.py: 27 settings
+    # differed from U1's preset, only 12 were declared, and Snapmaker Orca
+    # served its own values for the rest.
+    "bambu_da_boss": DOWNLOADS / "da_boss1.3mf",
     # An 11-plate A1 mini project (180 mm bed, 32 objects, 10 filaments). The
     # multi-plate regression case: object coordinates are absolute and spaced
     # by the *source* bed, so converting without re-placing them left every
