@@ -185,3 +185,35 @@ runs it at a 97-byte chunk size, smaller than the codes it must not lose.
 `tests/test_streaming.py` asserts the memory ceiling, byte-identical mesh
 pass-through, and that boundary case, because a stray `get_bytes` in a loop over
 geometry would restore the old behaviour without failing anything else.
+
+
+## When one fix ships with another, don't credit them together (2026-07-28)
+
+`different_settings_to_system` got two changes in the same commit: scope the diff
+to keys the target's presets define, and filter it further to a hand-picked
+recipe list. Loading started working, and the module recorded that a 36-key list
+broke Bambu Studio while a 7-key list worked -- attributing the fix to the list
+being *short*.
+
+That was the wrong half. The long list had been built by unioning the *source
+project's* entries in, so it named settings the target had no equivalent for.
+The vocabulary rule fixed it; the length was incidental. The recipe filter then
+quietly did damage for weeks: on a real P1S project, 27 settings differed from
+the target's preset and 12 were declared, so every speed and acceleration the
+owner had tuned was served from Snapmaker U1's preset instead. The user reported
+"the settings still don't carry over" and was right both times.
+
+Proof it was the wrong attribution: with the filter removed the same conversion
+now declares 36 keys and Bambu Studio loads it with full geometry.
+
+Two things to carry:
+
+**A silent-loss bug needs a test that looks for absence.** Every existing test
+asserted that declared keys were valid. None asserted that valid keys were
+declared, so dropping 15 real settings passed 177 tests. The new test walks the
+target's preset and fails on anything that differs without being declared.
+
+**When a fix bundles two changes, the post-mortem must separate them.** The
+comment recording the wrong cause is what kept the filter in place -- it read as
+settled evidence ("both verified in the application") when only the outcome had
+been verified, not the mechanism.

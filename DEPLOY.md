@@ -77,10 +77,12 @@ the blueprint was still pinning it. Change both, or neither.
 
 **A Blueprint deployed from a public repo URL does not always pick up a new
 commit on *Manual sync*.** Render's cached clone can stay behind and the button
-completes without creating a sync. Saving anything on the service's Environment
-page triggers a deploy that clones fresh at the current commit, which is a
-reliable way to force it. Connecting the GitHub account removes the problem
-altogether by enabling auto-deploy.
+completes without creating a sync at all -- seen repeatedly. The reliable route
+is the service's own **Manual Deploy -> Deploy latest commit**, which clones
+fresh at the head of `main`; that is what to use after every push. (Saving
+anything on the Environment page also forces a fresh clone, but it is a side
+effect, not the intended control.) Connecting the GitHub account removes the
+problem altogether by enabling auto-deploy.
 
 Verified end to end after both were fixed: a 122 MB / 726 MB-uncompressed
 11-plate project uploaded to the live instance returned HTTP 200 with a valid
