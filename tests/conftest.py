@@ -33,6 +33,11 @@ SAMPLES = {
     # bug -- Bambu Studio rejected the output as "Invalid configuration file"
     # (see convert/color_mapping.py's _H2C_VERIFIED_MACHINE_FIELDS).
     "u1_toucan_plus": DOWNLOADS / "Toucan-Plus by Rocket Luo.3mf",
+    # An 11-plate A1 mini project (180 mm bed, 32 objects, 10 filaments). The
+    # multi-plate regression case: object coordinates are absolute and spaced
+    # by the *source* bed, so converting without re-placing them left every
+    # object outside the target's printable area.
+    "a1mini_woody": DOWNLOADS / "Woody_toy_story.3mf",
 }
 
 

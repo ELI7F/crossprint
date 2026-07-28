@@ -108,6 +108,20 @@ settings that differed loaded the config but produced no geometry; scoping it to
 a curated recipe allowlist (`convert/settings_diff.py`) loads correctly with the
 user's values applied. Claim only what the user actually chose.
 
+## Multi-plate projects
+
+Object positions are absolute world coordinates, and the world is a grid of
+plates spaced `bed_size x 1.2` apart, `round(sqrt(n))` columns wide (both taken
+from `PartPlate.cpp` / `PartPlate.hpp`, and confirmed by measuring two real
+projects with different bed sizes before the source was consulted).
+
+That means bed size is baked into every object's coordinates. Changing printer
+without re-placing them leaves objects a whole bed away from where they belong:
+on a bigger bed they cluster in a corner, on a smaller one they land outside it
+and the slicer refuses to slice. `convert/plate_layout.py` handles this; if
+positions ever look wrong, check its assumptions against a fresh multi-plate
+project first.
+
 ## Future work
 
 Ordered by expected value.

@@ -19,6 +19,7 @@ from convert.color_mapping import map_colors_to_bambu, map_colors_to_u1, remap_o
 from convert.filament_mapping import map_filaments_to_target
 from convert.filament_variants import expand_per_variant_options
 from convert.paint_transfer import remap_paint_colors
+from convert.plate_layout import bed_size, relayout_for_target_bed
 from convert.settings_diff import compute_different_settings_to_system
 from core.archive import PathOrStream, ThreeMFArchive
 from core.field_policy import FieldPolicy
@@ -362,6 +363,22 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
         ms = ModelSettings.parse(model_settings_text)
         remap_object_extruders(ms, mapping.slot_map)
         archive.set_text("Metadata/model_settings.config", ms.to_xml())
+
+    # Object coordinates are absolute and laid out from the *source* bed. Move
+    # them onto the target's bed, or they sit in a corner of a larger one and
+    # fall outside a smaller one -- see convert/plate_layout.py.
+    layout = relayout_for_target_bed(
+        archive,
+        model_settings_xml=archive.get_text("Metadata/model_settings.config"),
+        source_bed=bed_size(project.get_list("printable_area")),
+        target_bed=bed_size(flat_target_machine.get("printable_area")),
+    )
+    if layout.objects_moved:
+        result.warnings.append(
+            f"re-placed {layout.objects_moved} object(s) across {layout.plate_count} plate(s) for "
+            f"{MODEL_REGISTRY[target]}'s bed."
+        )
+    result.warnings.extend(layout.warnings)
 
     paint_report = remap_paint_colors(archive, mapping.slot_map, max_target_slot=result.filament_count)
     if paint_report.out_of_range:

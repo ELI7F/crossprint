@@ -59,7 +59,7 @@ mounted toolheads) print to stderr; the file is still written.
 .venv/Scripts/python -m pytest
 ```
 
-152 tests, run against real `.3mf` files rather than synthetic fixtures —
+160 tests, run against real `.3mf` files rather than synthetic fixtures —
 `tests/conftest.py` points at the user's own Downloads folder and skips
 gracefully if a given sample isn't present.
 
@@ -86,6 +86,7 @@ convert/            the actual conversion logic
   settings_diff.py    rebuilds different_settings_to_system (recipe-scoped) so the
                        slicer honors the source's recipe, not the target's defaults
   filament_variants.py per-extruder-variant expansion of per-filament settings
+  plate_layout.py     re-places objects on the target's bed (multi-plate safe)
   pipeline.py         model registry + parse -> classify -> map colors -> build -> write
 
 profiles/           vendored official system presets (see SOURCES.md for exact commits)
@@ -146,6 +147,14 @@ fails loudly vs. silently) and the ranked future-work list.
     "invalid values found in the 3mf" and silently substitutes its own
     defaults, so the project opens but the user's settings never arrive.
     Bounds are extracted per fork and out-of-range values replaced.
+- **Object positions are absolute, and the plate grid is derived from the
+  *source* bed.** A project's objects live in one world coordinate space laid
+  out as a grid of plates spaced `bed x 1.2` apart. Convert without touching
+  them and an 11-plate A1 mini project (180 mm bed) puts every object outside
+  an H2C's printable area — Bambu Studio reports "objects are laid over the
+  boundary" and refuses to slice. `convert/plate_layout.py` re-places each
+  object using Bambu's own layout rule from `PartPlate.cpp`, keeping it on the
+  plate the user chose.
 - **We own the model, the colours and the print recipe; the slicer owns the
   machine.** Nozzle variants, per-extruder kinematics, AMS routing and purge
   matrices cannot be synthesised from static data: their widths depend on how
