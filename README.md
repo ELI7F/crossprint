@@ -59,7 +59,7 @@ mounted toolheads) print to stderr; the file is still written.
 .venv/Scripts/python -m pytest
 ```
 
-166 tests, run against real `.3mf` files rather than synthetic fixtures —
+167 tests, run against real `.3mf` files rather than synthetic fixtures —
 `tests/conftest.py` points at the user's own Downloads folder and skips
 gracefully if a given sample isn't present.
 

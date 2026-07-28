@@ -1800,6 +1800,50 @@
         "Enable reading unknown configuration values by verbosely substituting them with defaults.",
         "Enable reading unknown configuration values by silently substituting them with defaults."
       ]
+    },
+    "bottom_surface_pattern": {
+      "values": [
+        "monotonic",
+        "monotonicline",
+        "rectilinear",
+        "alignedrectilinear",
+        "concentric",
+        "hilbertcurve",
+        "archimedeanchords",
+        "octagramspiral"
+      ],
+      "labels": [
+        "Monotonic",
+        "Monotonic line",
+        "Rectilinear",
+        "Aligned Rectilinear",
+        "Concentric",
+        "Hilbert Curve",
+        "Archimedean Chords",
+        "Octagram Spiral"
+      ]
+    },
+    "internal_solid_infill_pattern": {
+      "values": [
+        "monotonic",
+        "monotonicline",
+        "rectilinear",
+        "alignedrectilinear",
+        "concentric",
+        "hilbertcurve",
+        "archimedeanchords",
+        "octagramspiral"
+      ],
+      "labels": [
+        "Monotonic",
+        "Monotonic line",
+        "Rectilinear",
+        "Aligned Rectilinear",
+        "Concentric",
+        "Hilbert Curve",
+        "Archimedean Chords",
+        "Octagram Spiral"
+      ]
     }
   },
   "types": {

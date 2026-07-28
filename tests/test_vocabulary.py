@@ -125,11 +125,31 @@ def test_enum_maps_load_and_capture_the_known_fork_divergence():
     assert snapmaker["ironing_pattern"]["values"] == ("rectilinear", "concentric")
 
 
-def test_enum_options_with_copied_value_lists_are_left_unknown():
-    """`bottom_surface_pattern` inherits its list from another option in C++.
-    An earlier parser guessed, produced category labels as "valid values", and
-    would have "repaired" perfectly good settings."""
-    assert "bottom_surface_pattern" not in load_enums(BAMBU)
+def test_enum_options_with_copied_value_lists_are_resolved():
+    """Some options don't push their own values but copy another's:
+    `def->enum_values = def_top_fill_pattern->enum_values`. Leaving those
+    unknown meant `internal_solid_infill_pattern` went unchecked and a
+    converted project made Bambu Studio pop its "some values have been
+    replaced" dialog. The reference is followed, not guessed -- both options
+    must end up with exactly top_surface_pattern's list."""
+    enums = load_enums(BAMBU)
+    reference = enums["top_surface_pattern"]["values"]
+    for key in ("bottom_surface_pattern", "internal_solid_infill_pattern"):
+        assert enums[key]["values"] == reference, key
+        assert "zig-zag" in enums[key]["values"] and "rectilinear" not in enums[key]["values"]
+
+
+def test_copied_enum_lists_translate_snapmakers_value_by_label():
+    """The concrete bug: Snapmaker writes `rectilinear`, Bambu labels its
+    `zig-zag` "Rectilinear", so the user's choice survives the rename."""
+    repaired, notes = repair_enum_values(
+        {"internal_solid_infill_pattern": "rectilinear"},
+        target_enums=load_enums(BAMBU),
+        source_enums=load_enums(SNAPMAKER),
+        fallbacks={},
+    )
+    assert repaired["internal_solid_infill_pattern"] == "zig-zag"
+    assert notes
 
 
 def test_repair_translates_by_label_preserving_the_users_choice():
