@@ -5,6 +5,8 @@ opens a browser; when a `PORT` environment variable is present — which every
 hosting platform sets — it binds publicly, skips the browser, and applies the
 tighter limits described below. Nothing needs to be edited to deploy.
 
+**Live instance:** https://crossprint.onrender.com
+
 ## Deploying to Render (free)
 
 1. Push this folder to a GitHub repository.
@@ -20,6 +22,14 @@ to keep it warm.
 
 Any platform that reads a `Procfile` — Railway, Fly.io, Heroku — works from the
 same files without changes.
+
+### Deploying from the public repo URL instead
+
+Render also accepts a public repository URL directly, which avoids granting it
+access to your GitHub account. That is how the live instance above was set up.
+The trade-off is that **auto-deploy is off**: after pushing a change, open the
+Blueprint page and hit *Manual sync*, or connect the GitHub account to have
+Render redeploy on every push.
 
 ## Why the limits are what they are
 

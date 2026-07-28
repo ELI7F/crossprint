@@ -10,6 +10,9 @@ container and config *shape* are identical — but they have diverged into
 genuinely different dialects, and most of this tool's work is reconciling
 that. See "Key design decisions" below, and `policy/field_map.yaml`.
 
+**Try it:** https://crossprint.onrender.com — free instance, sleeps when idle, so
+the first request after a quiet spell takes ~50 s to wake.
+
 ## Supported printers
 
 Run `cli.py models` for the live list. Verification depth varies, and the
