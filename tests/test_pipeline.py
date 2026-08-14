@@ -306,3 +306,37 @@ def test_arity_mismatches_are_reshaped_not_discarded():
             )
             if expect_list:
                 assert len(set(value)) == 1, f"{key} should broadcast one value, got {value!r}"
+
+
+def test_no_setting_still_names_the_source_machine():
+    """Nothing in the output may point back at the machine it came from.
+
+    `bed_custom_model` was the visible one: a Bambu project carries an absolute
+    path into Bambu Studio's install, and Snapmaker Orca happily loaded it and
+    drew Bambu's X1 bed as a black slab sitting on the U1's plate. The user saw
+    it before this suite did. `print_compatible_printers`, `inherits_group` and
+    the two `default_*_profile` keys are the same class -- references into a
+    library the target doesn't have.
+    """
+    import re
+
+    source_machine = re.compile(r"BBL|Bambu|Anycubic", re.IGNORECASE)
+
+    for source, target in (("a1_shadow_sonic", "u1"), ("bambu_da_boss", "u1")):
+        archive, _ = convert(sample_path(source), target)
+        buf = BytesIO()
+        try:
+            archive.write(buf)
+        finally:
+            archive.close()
+        buf.seek(0)
+        with ThreeMFArchive.open(buf) as out:
+            config = json.loads(out.get_text("Metadata/project_settings.config"))
+
+        offenders = {}
+        for key, value in config.items():
+            candidates = value if isinstance(value, list) else [value]
+            hit = [v for v in candidates if isinstance(v, str) and source_machine.search(v)]
+            if hit:
+                offenders[key] = hit[:2]
+        assert offenders == {}, f"{source}->{target} still names the source machine: {offenders}"

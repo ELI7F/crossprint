@@ -79,6 +79,33 @@ _MACHINE_OWNED = {
     "filament_volume_map",
 }
 
+# References to the *source* slicer's own presets and assets. These are not
+# kinematics, so the list above never caught them, and every one of them
+# survived conversion still describing the machine the project came from.
+#
+# The visible one was `bed_custom_model`. A Bambu project carries an absolute
+# path into Bambu Studio's install:
+#
+#     C:/Program Files/Bambu Studio/resources/profiles/BBL/bbl-3dp-X1.stl
+#
+# Snapmaker Orca loads it and draws Bambu's X1 bed as a solid black slab
+# sitting on the U1's plate. The user spotted it before this code did. A real
+# U1 project leaves the field empty.
+#
+# The rest are preset names: a U1 project claiming its process is compatible
+# only with "Bambu Lab A1 0.4 nozzle", and inheriting from "0.20mm Standard
+# @BBL A1". Like the filament ids in convert/filament_mapping.py, these are
+# references into a library the target doesn't have. Dropping them lets the
+# target's own printer preset supply the answer, which is the right one.
+_SOURCE_MACHINE_REFERENCES = {
+    "bed_custom_model",
+    "bed_custom_texture",
+    "default_print_profile",
+    "default_filament_profile",
+    "print_compatible_printers",
+    "inherits_group",
+}
+
 
 def slicer_owned_keys(variant_options: set[str]) -> set[str]:
     """Everything to leave out, for a target with these per-variant options.
@@ -87,7 +114,8 @@ def slicer_owned_keys(variant_options: set[str]) -> set[str]:
     filament settings it stores once per extruder variant. Their width is the
     part we cannot reconstruct, so they go too.
     """
-    return _MACHINE_OWNED | set(variant_options) | {k for k in _MACHINE_OWNED if k.startswith("machine_max_")}
+    return (_MACHINE_OWNED | _SOURCE_MACHINE_REFERENCES | set(variant_options)
+            | {k for k in _MACHINE_OWNED if k.startswith("machine_max_")})
 
 
 def strip_slicer_owned(config: dict, variant_options: set[str]) -> tuple[dict, list[str]]:

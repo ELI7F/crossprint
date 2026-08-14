@@ -263,3 +263,37 @@ Re-verified in both applications after the change: Snapmaker Orca shows the A1
 project's travel speed 700 and acceleration 6000 as modified values rather than
 its own 500 and 10000, and Bambu Studio loads the broadcast direction with full
 geometry and the U1 project's inner-wall and infill speeds applied.
+
+## References to the source machine are their own bug class (2026-08-14)
+
+`core/slicer_owned.py` was built around one idea -- the slicer owns the
+machine -- and implemented it for kinematics only: nozzle variants,
+retraction, purge matrices. It never covered the machine's *identity*, so six
+settings kept describing the printer the project came from:
+
+    bed_custom_model          C:/Program Files/Bambu Studio/.../bbl-3dp-X1.stl
+    print_compatible_printers ['Bambu Lab A1 0.4 nozzle']
+    default_print_profile     0.20mm Standard @BBL A1
+    default_filament_profile  ['Bambu PLA Basic @BBL A1']
+    inherits_group            ['0.20mm Standard @BBL A1', 'Anycubic PLA Silk...']
+    filament_vendor           ['Bambu Lab', ...]
+
+The first one is an absolute path into another slicer's installation
+directory. Snapmaker Orca loaded it and drew Bambu's X1 bed as a black slab
+standing on the U1's plate, and `print_compatible_printers` naming only the A1
+is what left the printer panel showing a placeholder instead of the U1's
+picture. Clearing all six also silenced an acceleration warning that had
+looked unrelated.
+
+**The user found this, not the tests.** They said "look at the black tray
+stuck there and the machine name with no picture". Two runs earlier I had
+opened the same file, seen the same screen, and reported it as clean, because
+I was checking the things I had just changed -- plates, colours, speeds --
+rather than looking at what was actually on screen. Verifying in the
+application only pays if you look at the whole window.
+
+The general shape is the same one `convert/filament_mapping.py` documents: a
+reference into a library the target does not have. Worth asking of any field
+that survives conversion -- does this name something that only exists on the
+source machine? `tests/test_pipeline.py` now scans the entire output config for
+any string naming the source vendor and fails on a single hit.

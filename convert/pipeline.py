@@ -247,6 +247,7 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
     # other leaves the project claiming a Bambu preset while still carrying the
     # source vendor's id -- see convert/filament_mapping.py.
     new_config["filament_ids"] = filament_mapping.filament_ids
+    new_config["filament_vendor"] = filament_mapping.filament_vendor
     result.warnings.extend(filament_mapping.warnings)
 
     # A dual-hotend target stores every per-filament setting once per extruder

@@ -41,6 +41,10 @@ class FilamentMappingResult:
     #: The target vendor's catalogue code per filament, taken from the same
     #: preset that supplied the name so the two cannot drift apart.
     filament_ids: list[str] = field(default_factory=list)
+    #: Likewise the vendor label. A U1 project listing "Bambu Lab" as the maker
+    #: of a Snapmaker preset is merely wrong rather than broken, but it comes
+    #: from the same preset and costs nothing to keep straight.
+    filament_vendor: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -106,24 +110,25 @@ def map_filaments_to_target(
         )
     return FilamentMappingResult(
         filament_settings_id=resolved,
-        filament_ids=[_catalogue_id(target_library, name) for name in resolved],
+        filament_ids=[_preset_field(target_library, name, "filament_id") for name in resolved],
+        filament_vendor=[_preset_field(target_library, name, "filament_vendor") for name in resolved],
         warnings=warnings,
     )
 
 
-def _catalogue_id(library: PresetLibrary, preset_name: str) -> str:
-    """The vendor's catalogue code for a preset ("GFA00"), or "" if unknown.
+def _preset_field(library: PresetLibrary, preset_name: str, field_name: str) -> str:
+    """One field of a filament preset, or "" if the preset doesn't declare it.
 
-    The code is declared on the `@base` preset at the root of the inherits
+    These fields are declared on the `@base` preset at the root of the inherits
     chain, not on the printer-specific leaf, so the chain has to be flattened
-    to see it. An empty string is deliberate for the unknown case: it reads as
-    "no catalogue entry", which is what a generic project carries, and is far
-    safer than leaving the source vendor's code in place.
+    to see them. An empty string is deliberate for the unknown case: it reads
+    as "no entry", which is what a generic project carries, and is far safer
+    than leaving the source vendor's value in place.
     """
     preset = library.get("filament", preset_name)
     if preset is None:
         return ""
-    value = flatten("filament", preset, library).get("filament_id")
+    value = flatten("filament", preset, library).get(field_name)
     if isinstance(value, list):
         value = value[0] if value else None
     return str(value) if value else ""
