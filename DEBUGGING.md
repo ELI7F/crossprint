@@ -217,3 +217,49 @@ target's preset and fails on anything that differs without being declared.
 comment recording the wrong cause is what kept the filter in place -- it read as
 settled evidence ("both verified in the application") when only the outcome had
 been verified, not the mechanism.
+
+## Arity: reshape, don't discard (2026-08-14)
+
+`core/shapes.py` dropped every setting whose arity differed between the forks,
+reasoning that inventing per-extruder values the user never chose was worse
+than losing a speed they probably inherited from a preset. The reasoning was
+sound for the case that motivated it and much too broad for the general one.
+
+What the forks actually disagree about is often only a wrapper:
+
+    A1 source        real U1 file      what we produced
+    ['200']          200               (dropped)
+    ['6000']         10000             (dropped)
+
+Unwrapping `['200']` to `200` invents nothing -- it is the same number written
+the way the target writes it. 30 settings were being discarded over a pair of
+brackets on one A1 project, and 29 going the other way on a U1 project. Every
+speed and acceleration the owner had tuned, silently replaced by the target's
+defaults. The user's report was that the conversion was "really bad", and the
+settings vanishing is what they were seeing.
+
+The rule now: convert when the conversion is lossless, drop only when it isn't.
+A single-element list unwraps; an all-equal list unwraps; a list whose entries
+disagree still drops, because the target has one slot and no basis to pick a
+winner; a scalar broadcasts to one entry per extruder.
+
+Two things worth carrying:
+
+**The declared type is a better shape authority than the preset.** Comparing
+against the target's preset only covers keys the preset happens to set.
+`travel_acceleration` is declared `coFloat` by Snapmaker and `coFloats` by
+Bambu while *neither* preset sets it, so it slipped through as `['10000']` in a
+project that wanted a bare number. The vocabulary's declared types cover every
+key the fork knows about. (Only the vector->scalar direction can use them
+alone: growing a scalar needs a preset to say how many entries to make.)
+
+**"Verified in the application" is scoped to what was verified.** The old
+comment said dropping was verified in Bambu Studio, and it was -- the file
+loaded with its geometry. What was never checked is whether anything *else*
+would have loaded too. A verification that a fix works is not evidence that the
+alternatives don't.
+
+Re-verified in both applications after the change: Snapmaker Orca shows the A1
+project's travel speed 700 and acceleration 6000 as modified values rather than
+its own 500 and 10000, and Bambu Studio loads the broadcast direction with full
+geometry and the U1 project's inner-wall and infill speeds applied.

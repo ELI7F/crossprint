@@ -273,3 +273,36 @@ def test_cli_models_command_lists_every_registered_slug(capsys):
     out = capsys.readouterr().out
     for slug in MODEL_REGISTRY:
         assert slug in out
+
+
+def test_arity_mismatches_are_reshaped_not_discarded():
+    """A setting the target stores in a different shape must survive.
+
+    The A1 wraps every speed and acceleration in a single-element list where
+    the U1 stores a bare number. Dropping those keys over the brackets cost 30
+    real settings on one project -- every speed and acceleration the owner had
+    tuned. Unwrapping ['200'] to 200 changes nothing about the value.
+
+    The reverse direction is asserted too: a U1 scalar becomes one entry per
+    extruder for Bambu, which is what a single-extruder source meant by it.
+    """
+    for source, target, expect_list in (("a1_shadow_sonic", "u1", False),
+                                        ("u1_toucan_plus", "h2c", True)):
+        archive, _ = convert(sample_path(source), target)
+        buf = BytesIO()
+        try:
+            archive.write(buf)
+        finally:
+            archive.close()
+        buf.seek(0)
+        with ThreeMFArchive.open(buf) as out:
+            config = json.loads(out.get_text("Metadata/project_settings.config"))
+
+        for key in ("bridge_speed", "default_acceleration", "outer_wall_speed", "travel_speed"):
+            assert key in config, f"{source}->{target} dropped {key} instead of reshaping it"
+            value = config[key]
+            assert isinstance(value, list) is expect_list, (
+                f"{source}->{target}: {key} is {value!r}, wrong shape for the target"
+            )
+            if expect_list:
+                assert len(set(value)) == 1, f"{key} should broadcast one value, got {value!r}"

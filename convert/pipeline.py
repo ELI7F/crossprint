@@ -323,15 +323,22 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
     # per-extruder vector where the source has one number. Keeping them (and
     # marking them as deliberate overrides below) produced a project that
     # loaded its config but showed no geometry. See core/shapes.py.
-    new_config, reshaped = harmonize_shapes(
+    new_config, shape_dropped, shape_reshaped = harmonize_shapes(
         new_config,
         target_defaults={**flat_target_print, **flat_target_machine},
         keep=load_variant_options(_vendor_dir(target)) | _FILAMENT_SIZED_KEYS,
+        target_types=load_option_types(_vendor_dir(target)),
     )
-    if reshaped:
+    if shape_reshaped:
         result.warnings.append(
-            f"dropped {len(reshaped)} setting(s) that {MODEL_REGISTRY[target]} stores per extruder "
-            f"rather than as a single value (e.g. {', '.join(reshaped[:3])}); its own values apply."
+            f"rewrote {len(shape_reshaped)} setting(s) into the shape {MODEL_REGISTRY[target]} stores "
+            f"them in (e.g. {', '.join(shape_reshaped[:3])}); the values themselves are unchanged."
+        )
+    if shape_dropped:
+        result.warnings.append(
+            f"dropped {len(shape_dropped)} setting(s) whose per-extruder values disagree and which "
+            f"{MODEL_REGISTRY[target]} stores as a single value (e.g. {', '.join(shape_dropped[:3])}); "
+            "its own values apply."
         )
 
     # Hand the machine layer back to the slicer. Its widths depend on how the
