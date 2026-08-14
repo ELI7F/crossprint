@@ -10,14 +10,15 @@ user about unvetted G-code in "customized presets".
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 
 from convert.filament_mapping import map_filaments_to_target
-from convert.pipeline import MODEL_REGISTRY, convert
+from convert.pipeline import MODEL_REGISTRY, _vendor_dir, convert
 from core.archive import ThreeMFArchive
-from core.preset_resolver import PresetLibrary
+from core.preset_resolver import PresetLibrary, flatten
 
 from .conftest import sample_path
 
@@ -102,3 +103,34 @@ def test_every_bambu_target_resolves_its_filament_presets(target):
     archive, _ = convert(sample_path("u1_majorasmask"), target)
     for name in _config(archive)["filament_settings_id"]:
         assert BAMBU.get("filament", name) is not None, (target, name)
+
+
+def test_catalogue_ids_move_with_the_preset_names():
+    """`filament_ids` must be rewritten alongside `filament_settings_id`.
+
+    Both are references into the target vendor's filament library, and both
+    dangle the same way if left pointing at the source's. Rewriting only the
+    name produced a project that claimed "Bambu PLA Basic @BBL H2C" while still
+    carrying `P3e70acc` -- a custom id inherited from an Anycubic project
+    several conversions earlier. Real Bambu files only ever carry Bambu's own
+    catalogue codes (GFA00, GFB01, GFL99), which is the invariant asserted here.
+    """
+    archive, _ = convert(sample_path("a1_shadow_sonic"), "h2c")
+    buf = BytesIO()
+    try:
+        archive.write(buf)
+    finally:
+        archive.close()
+    buf.seek(0)
+    with ThreeMFArchive.open(buf) as out:
+        config = json.loads(out.get_text("Metadata/project_settings.config"))
+
+    names = config["filament_settings_id"]
+    ids = config["filament_ids"]
+    assert len(ids) == len(names)
+
+    library = PresetLibrary(_vendor_dir("h2c"))
+    for name, catalogue_id in zip(names, ids):
+        expected = flatten("filament", library.get("filament", name), library).get("filament_id")
+        assert catalogue_id == expected, f"{name} should carry {expected!r}, carries {catalogue_id!r}"
+        assert catalogue_id, f"{name} resolved to a blank catalogue id"

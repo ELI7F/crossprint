@@ -243,6 +243,10 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
         fallback_preset=(flat_target_machine.get("default_filament_profile") or [None])[0],
     )
     new_config["filament_settings_id"] = filament_mapping.filament_settings_id
+    # The catalogue codes must move with the names. Rewriting one and not the
+    # other leaves the project claiming a Bambu preset while still carrying the
+    # source vendor's id -- see convert/filament_mapping.py.
+    new_config["filament_ids"] = filament_mapping.filament_ids
     result.warnings.extend(filament_mapping.warnings)
 
     # A dual-hotend target stores every per-filament setting once per extruder

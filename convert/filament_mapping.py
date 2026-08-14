@@ -12,6 +12,16 @@ So each filament is re-pointed at a real system preset of the target vendor,
 matched on material type. The *values* (temperatures, flow, colour) still pass
 through unchanged and are what actually get used; this only fixes the name the
 project claims to inherit from, so the reference resolves.
+
+`filament_ids` is the *same* kind of reference and needs the same treatment.
+It holds the vendor's catalogue codes -- Bambu's are `GFA00`, `GFB01`, `GFL99`
+-- and is what the slicer matches against its filament library and against AMS
+tags. Rewriting only the preset name leaves the two disagreeing: a real project
+converted here claimed `Bambu PLA Basic @BBL H2C` while still carrying
+`P3e70acc`, a custom id inherited from an Anycubic project three conversions
+back. The name resolved and the id did not. So the catalogue code is taken from
+the same preset that supplied the name, and the two stay consistent by
+construction.
 """
 from __future__ import annotations
 
@@ -28,6 +38,9 @@ _PREFERRED_VARIANTS = ("Basic", "Pure", "Lite", "Matte", "HF", "Tough")
 @dataclass
 class FilamentMappingResult:
     filament_settings_id: list[str]
+    #: The target vendor's catalogue code per filament, taken from the same
+    #: preset that supplied the name so the two cannot drift apart.
+    filament_ids: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -91,4 +104,26 @@ def map_filaments_to_target(
             f"no {model_tag} preset found for material(s) {', '.join(sorted(unmatched))} -- "
             f"fell back to {fallback_preset!r}; pick the right filament in the slicer before printing."
         )
-    return FilamentMappingResult(filament_settings_id=resolved, warnings=warnings)
+    return FilamentMappingResult(
+        filament_settings_id=resolved,
+        filament_ids=[_catalogue_id(target_library, name) for name in resolved],
+        warnings=warnings,
+    )
+
+
+def _catalogue_id(library: PresetLibrary, preset_name: str) -> str:
+    """The vendor's catalogue code for a preset ("GFA00"), or "" if unknown.
+
+    The code is declared on the `@base` preset at the root of the inherits
+    chain, not on the printer-specific leaf, so the chain has to be flattened
+    to see it. An empty string is deliberate for the unknown case: it reads as
+    "no catalogue entry", which is what a generic project carries, and is far
+    safer than leaving the source vendor's code in place.
+    """
+    preset = library.get("filament", preset_name)
+    if preset is None:
+        return ""
+    value = flatten("filament", preset, library).get("filament_id")
+    if isinstance(value, list):
+        value = value[0] if value else None
+    return str(value) if value else ""

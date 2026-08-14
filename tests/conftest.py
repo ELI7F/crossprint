@@ -39,6 +39,12 @@ SAMPLES = {
     # differed from U1's preset, only 12 were declared, and Snapmaker Orca
     # served its own values for the rest.
     "bambu_da_boss": DOWNLOADS / "da_boss1.3mf",
+    # A Bambu A1 project with an unusual history: it was converted from an
+    # Anycubic Kobra X project before reaching the A1, and still carries that
+    # origin in its filament preset names and catalogue ids. 11 plates,
+    # 80 objects, 9 filaments. The file that exposed filament_ids being left
+    # pointing at the source vendor's catalogue.
+    "a1_shadow_sonic": DOWNLOADS / "Shadow Urban" / "A1-Shadow-Sonic.3mf",
     # An 11-plate A1 mini project (180 mm bed, 32 objects, 10 filaments). The
     # multi-plate regression case: object coordinates are absolute and spaced
     # by the *source* bed, so converting without re-placing them left every
