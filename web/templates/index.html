@@ -139,6 +139,10 @@
   }
   footer p { margin: 0 0 8px; }
   footer a { color: var(--muted); }
+  .build {
+    margin-top: 16px; font-size: .74rem; letter-spacing: .04em;
+    color: var(--muted); opacity: .65; font-variant-numeric: tabular-nums;
+  }
 
   .support { margin-top: 18px; }
   .btn-donate {
@@ -198,9 +202,10 @@
   {% if hosted %}
   <p>Files are processed in memory, never written to the server, and gone once your download
      finishes. For anything confidential, or projects too large for this server,
-     <a href="https://github.com/ELI7F/crossprint">run it locally</a> instead.</p>
+     <a href="https://github.com/ELI7F/crossprint">run it locally</a> instead.
+     Files up to {{ upload_limit_mb }} MB.</p>
   {% else %}
-  <p>Running locally — your files never leave this machine.</p>
+  <p>Running locally — your files never leave this machine. Upload limit {{ upload_limit_mb }} MB.</p>
   {% endif %}
   {% if donate_url %}
   <div class="support">
@@ -214,6 +219,7 @@
     <span class="support-note">Free and open source — a tip just helps keep it online.</span>
   </div>
   {% endif %}
+  <p class="build">{{ build_id }}</p>
 </footer>
 
 <script>

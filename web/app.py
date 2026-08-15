@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import webbrowser
 import zipfile
@@ -62,6 +63,40 @@ MAX_UNCOMPRESSED_BYTES = int(os.environ.get("MAX_UNCOMPRESSED_MB", "3072" if _HO
 
 # Above this, a converted result goes to a temp file instead of staying in RAM.
 _SPOOL_TO_DISK_BYTES = 8 * 1024 * 1024
+
+# Bump on a change worth telling users about. The commit beside it is what
+# actually identifies the build.
+VERSION = "1.1"
+
+
+def _build_id() -> str:
+    """A short, visible identity for the running build.
+
+    This exists because of a real failure: a fix was deployed, the live site
+    kept serving a build three commits older, and nothing on the page or in the
+    health check said so. Two days were spent re-debugging code that was
+    already correct, against a server that never received it. A version anyone
+    can read at a glance turns "is my fix live?" from a guess into a look.
+
+    Render exposes the deployed commit as RENDER_GIT_COMMIT. Locally there is
+    no such variable, so the commit is read from git; if that fails too (a
+    source download with no .git, say) the version alone still shows.
+    """
+    commit = os.environ.get("RENDER_GIT_COMMIT", "")
+    if not commit:
+        try:
+            commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=Path(__file__).resolve().parent.parent,
+                capture_output=True, text=True, timeout=5, check=True,
+            ).stdout.strip()
+        except Exception:
+            commit = ""
+    where = "hosted" if _HOSTED else "local"
+    return f"v{VERSION} · {commit[:7]} · {where}" if commit else f"v{VERSION} · {where}"
+
+
+BUILD_ID = _build_id()
 
 # Conversions are memory-heavy and short. Serialising them keeps peak usage at
 # one conversion's worth no matter how many people click at once, while the
@@ -159,15 +194,22 @@ def _too_large(_error):
 
 @app.get("/healthz")
 def healthz():
-    """Liveness probe, and what a platform's uptime check should poll."""
-    return jsonify(status="ok", models=len(MODEL_REGISTRY))
+    """Liveness probe, and what a platform's uptime check should poll.
+
+    `build` is here so the probe answers the question that actually matters
+    when a deploy misbehaves: not "is something running" but "which build".
+    """
+    return jsonify(status="ok", models=len(MODEL_REGISTRY), build=BUILD_ID,
+                   uploadLimitMb=MAX_UPLOAD_BYTES // (1024 * 1024))
 
 
 @app.get("/")
 def index():
     # `hosted` drives the privacy wording: the local build can honestly promise
     # files never leave the machine, and the hosted one must not.
-    return render_template("index.html", hosted=_HOSTED, donate_url=DONATE_URL)
+    return render_template("index.html", hosted=_HOSTED, donate_url=DONATE_URL,
+                           build_id=BUILD_ID,
+                           upload_limit_mb=MAX_UPLOAD_BYTES // (1024 * 1024))
 
 
 @app.post("/api/inspect")

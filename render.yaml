@@ -20,10 +20,17 @@ services:
       # in production -- changing the code defaults alone does nothing here.
       #
       # The upload cap is not about memory: uploads spool to disk, and peak RSS
-      # is flat in project size. It bounds how long a request may sit streaming
-      # in.
+      # is flat in project size (74 MB for a 726 MB project). It bounds two
+      # other things -- how long a request sits streaming in, and the ephemeral
+      # disk holding the upload plus the result.
+      #
+      # Raised 300 -> 600 after a real 321 MB project was rejected. The
+      # measurement behind it: a 122 MB upload completed end to end in 166 s
+      # with memory flat, so 600 MB is roughly 13 minutes worst case against a
+      # 600 s worker timeout -- close enough that anything larger belongs
+      # local, where the same file converts in 35 s with no transfer at all.
       - key: MAX_UPLOAD_MB
-        value: "300"
+        value: "600"
       # Uncompressed size no longer predicts memory use, so this is only a
       # zip-bomb backstop. Geometry compresses ~6x, so a 95 MB upload can
       # legitimately hold well over 500 MB of meshes.
