@@ -75,14 +75,28 @@ code defaults alone does nothing in production -- the streaming work above
 shipped and the live server still refused anything over the old 80 MB, because
 the blueprint was still pinning it. Change both, or neither.
 
-**A Blueprint deployed from a public repo URL does not always pick up a new
-commit on *Manual sync*.** Render's cached clone can stay behind and the button
-completes without creating a sync at all -- seen repeatedly. The reliable route
-is the service's own **Manual Deploy -> Deploy latest commit**, which clones
-fresh at the head of `main`; that is what to use after every push. (Saving
-anything on the Environment page also forces a fresh clone, but it is a side
-effect, not the intended control.) Connecting the GitHub account removes the
-problem altogether by enabling auto-deploy.
+**A Blueprint deployed from a public repo URL does not reliably pick up new
+commits, and this cost real time.** Render's cached clone stays behind; *Manual
+sync* on the Blueprint page often completes without creating a sync at all, and
+the service's own *Manual Deploy -> Deploy latest commit* worked only
+sometimes. Over two days the live site served a build three commits old while
+every local test passed, and the user kept converting files against it and
+reporting the results as broken. The build log said so plainly the whole time:
+
+    ==> It looks like we don't have access to your repo, but we'll try to
+        clone it anyway.
+
+**The fix is to connect the GitHub account** (service Settings -> Build ->
+Source -> Edit -> Connect Git provider -> GitHub), which sets Auto-Deploy to
+*On Commit*. Every push then deploys on its own and the manual step disappears.
+Do this before anything else on a new instance; deploying from a public URL is
+only worth it to avoid granting repository access, and the cost is a deploy
+path that silently does nothing.
+
+**Check the deployed commit, not the dashboard's word for it.** The service
+header shows the live commit hash. Better still, probe the running site for a
+behaviour only the new build has -- see the version probes in this section's
+history. A health check returning 200 says nothing about which build answered.
 
 Verified end to end after both were fixed: a 122 MB / 726 MB-uncompressed
 11-plate project uploaded to the live instance returned HTTP 200 with a valid
