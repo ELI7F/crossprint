@@ -104,3 +104,29 @@ def test_help_page_explains_every_report_category(client):
 def test_pages_link_to_each_other(client):
     assert '/help' in client.get("/").get_data(as_text=True)
     assert 'href="/"' in client.get("/help").get_data(as_text=True)
+
+
+def test_pages_carry_link_preview_metadata(client):
+    """A bare URL pasted into a forum or group renders as a card, not a line
+    of grey text -- which is the difference between a shared link people click
+    and one they scroll past."""
+    for path in ("/", "/help"):
+        body = client.get(path).get_data(as_text=True)
+        for tag in ('property="og:title"', 'property="og:image"', 'name="twitter:card"', 'rel="canonical"'):
+            assert tag in body, f"{path} is missing {tag}"
+
+
+def test_preview_title_matches_the_page_title(client):
+    """og:title is generated from the page's own title block, so the two can
+    never advertise different things."""
+    import re
+
+    body = client.get("/help").get_data(as_text=True)
+    title = re.search(r"<title>(.*?)</title>", body, re.S).group(1)
+    assert f'property="og:title" content="{title}"' in body
+
+
+def test_og_image_is_served(client):
+    response = client.get("/static/og.png")
+    assert response.status_code == 200
+    assert response.data.startswith(b"\x89PNG")
