@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Iterable
 
 from convert.color_mapping import map_colors_to_bambu, map_colors_to_u1, remap_object_extruders
 from convert.filament_mapping import map_filaments_to_target
@@ -21,6 +22,7 @@ from convert.filament_variants import expand_per_variant_options
 from convert.layer_heights import clamp_layer_height_profile
 from convert.paint_transfer import remap_paint_colors
 from convert.plate_layout import bed_size, relayout_for_target_bed
+from convert.report import ChangeReport
 from convert.settings_diff import compute_different_settings_to_system
 from core.archive import PathOrStream, ThreeMFArchive
 from core.field_policy import FieldPolicy
@@ -135,6 +137,29 @@ class ConversionResult:
     target_vendor: str
     filament_count: int
     warnings: list[str] = field(default_factory=list)
+    # Everything conversion did, not just the parts that need attention --
+    # see convert/report.py for why both exist.
+    report: ChangeReport = field(default_factory=ChangeReport)
+
+    def note(
+        self,
+        category: str,
+        title: str,
+        *,
+        detail: str = "",
+        items: Iterable[str] = (),
+        warning: str | None = None,
+    ) -> None:
+        """Record a change, and optionally the warning sentence for it.
+
+        One call site for both keeps the two from drifting: every warning is
+        a change, so a change recorded without its warning (or the reverse)
+        would mean the change list and the warning list disagree about what
+        happened.
+        """
+        self.report.add(category, title, detail=detail, items=items, needs_check=warning is not None)
+        if warning is not None:
+            self.warnings.append(warning)
 
 
 @dataclass
@@ -205,32 +230,84 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
         source_vendor=source_vendor,
         target_vendor=target,
         filament_count=len(mapping.filament_colour),
-        warnings=list(mapping.warnings),
+    )
+    for warning in mapping.warnings:
+        result.note("colors", warning, warning=warning)
+
+    # Slot numbers only move when the target routes colors differently; saying
+    # so when they didn't would be noise, so add_rename drops the no-ops.
+    result.report.add_rename(
+        "colors",
+        "Colour slots re-routed",
+        [(f"slot {src}", f"slot {dst}") for src, dst in sorted(mapping.slot_map.items())],
+        detail="Painted triangles and per-object assignments follow this mapping.",
     )
     if target not in _WELL_VERIFIED_MODELS:
-        result.warnings.append(
-            f"{MODEL_REGISTRY[target]} isn't independently verified against a real project file -- "
+        result.note(
+            "verify",
+            f"{MODEL_REGISTRY[target]} is a best-effort target",
+            detail="Same mechanism as the verified models in its hardware class, but no real project "
+            "file from this machine has been checked field-by-field.",
+            warning=f"{MODEL_REGISTRY[target]} isn't independently verified against a real project file -- "
             "it uses the same mechanism as verified models in its hardware class, but double-check "
-            "the result opens cleanly in Bambu Studio before printing."
+            "the result opens cleanly in Bambu Studio before printing.",
+        )
+
+    # Every model is targeted at its 0.4 nozzle preset, so a project sliced for
+    # a different nozzle keeps its line widths and flow while landing on a
+    # profile built for a nozzle it wasn't sliced for. That opens and prints,
+    # which is exactly why it needs saying -- nothing else in the file will.
+    source_variant = str(project.get_scalar("printer_variant", default="") or "")
+    if source_variant and source_variant != "0.4":
+        result.note(
+            "verify",
+            f"Source was sliced for a {source_variant} mm nozzle",
+            detail=f"Only the 0.4 mm profile is available for {MODEL_REGISTRY[target]}, so the project "
+            "lands on it. Re-check line widths, flow and layer height before printing.",
+            warning=f"source project uses a {source_variant} mm nozzle but only the 0.4 mm target profile "
+            "is supported -- review line width and flow settings after opening.",
         )
 
     new_config = dict(passthrough)
     # Fill every regenerate-bucket key the target machine preset actually defines,
     # except ones this target's hardware class must never carry (see mapping.exclude_fields) --
     # not "drop everything and hope the slicer has a sane fallback."
+    regenerated: list[str] = []
     for key in policy.regenerate:
         if key in mapping.exclude_fields:
             continue
         if key in flat_target_machine:
             new_config[key] = flat_target_machine[key]
+            regenerated.append(key)
     # Color/AMS routing (computed, not a flat machine-preset copy) wins over the generic fill above.
     new_config.update(mapping.target_fields)
     # Machine identity, set explicitly regardless of what the source called these.
+    identity_before = {k: project.get(k) for k in ("printer_settings_id", "printer_model", "printer_variant")}
     new_config["printer_settings_id"] = target_preset_name
     new_config["printer_model"] = flat_target_machine.get("printer_model", MODEL_REGISTRY[target])
     new_config["printer_variant"] = flat_target_machine.get("printer_variant", "0.4")
     target_print_profile_name = flat_target_machine.get("default_print_profile", project.print_settings_id)
     new_config["print_settings_id"] = target_print_profile_name
+
+    result.report.add_rename(
+        "printer",
+        "Printer identity rewritten",
+        [(str(identity_before[k] or "(unset)"), str(new_config[k])) for k in identity_before],
+        detail=f"The project now declares itself a {MODEL_REGISTRY[target]} project.",
+    )
+    result.report.add_rename(
+        "process",
+        "Print preset re-pointed",
+        [(str(project.print_settings_id or "(unset)"), str(target_print_profile_name))],
+        detail="The source's own print values are kept and marked as deviations from this preset.",
+    )
+    result.report.add(
+        "settings",
+        f"{len(regenerated)} machine setting(s) regenerated from the target's preset",
+        detail="Printer identity, kinematics, G-code and host-connection fields come from the target's "
+        "own system preset; everything else passes through from the source unchanged.",
+        items=sorted(regenerated),
+    )
 
     # Re-point the filament presets at ones the target actually has. Keeping the
     # source's names leaves a dangling reference to a "custom" preset whose
@@ -248,7 +325,15 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
     # source vendor's id -- see convert/filament_mapping.py.
     new_config["filament_ids"] = filament_mapping.filament_ids
     new_config["filament_vendor"] = filament_mapping.filament_vendor
-    result.warnings.extend(filament_mapping.warnings)
+    for warning in filament_mapping.warnings:
+        result.note("filaments", warning, warning=warning)
+    result.report.add_rename(
+        "filaments",
+        "Filament presets re-pointed at ones the target has",
+        zip(project.filament_settings_id, filament_mapping.filament_settings_id),
+        detail="A preset name the target doesn't know reads to it as a custom preset whose definition "
+        "should be bundled in the project -- and conversion drops those bundles.",
+    )
 
     # A dual-hotend target stores every per-filament setting once per extruder
     # variant. The source printer is single-variant, so its arrays are half the
@@ -262,9 +347,15 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
     )
     new_config = expansion.config
     if expansion.expanded:
-        result.warnings.append(
-            f"expanded {len(expansion.expanded)} per-filament setting(s) to one entry per extruder "
-            f"variant, as {MODEL_REGISTRY[target]} stores them per variant."
+        result.note(
+            "settings",
+            f"Expanded {len(expansion.expanded)} per-filament setting(s) to one entry per extruder variant",
+            detail=f"{MODEL_REGISTRY[target]} has more than one extruder variant and stores these once "
+            "per variant; the source printer has one, so its arrays were half the length the target "
+            "indexes into. Values are unchanged.",
+            items=sorted(expansion.expanded),
+            warning=f"expanded {len(expansion.expanded)} per-filament setting(s) to one entry per extruder "
+            f"variant, as {MODEL_REGISTRY[target]} stores them per variant.",
         )
 
     # Drop everything the target slicer has no definition for. The source is a
@@ -274,10 +365,15 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
     # key that is no longer in the config.
     new_config, dropped = filter_to_vocabulary(new_config, load_vocabulary(_vendor_dir(target)))
     if dropped:
-        result.warnings.append(
-            f"dropped {len(dropped)} setting(s) that {MODEL_REGISTRY[target]}'s slicer doesn't define "
+        result.note(
+            "settings",
+            f"Dropped {len(dropped)} setting(s) the target's slicer doesn't define",
+            detail=f"{MODEL_REGISTRY[target]}'s slicer is a different OrcaSlicer fork and has never heard "
+            "of these; keeping them would make it refuse to open the file. Its own defaults apply.",
+            items=sorted(dropped),
+            warning=f"dropped {len(dropped)} setting(s) that {MODEL_REGISTRY[target]}'s slicer doesn't define "
             f"(e.g. {', '.join(dropped[:3])}) -- they have no equivalent on the target and keeping "
-            "them would make it refuse to open the file."
+            "them would make it refuse to open the file.",
         )
 
     # Shared option names don't guarantee shared *values*: Snapmaker writes
@@ -315,9 +411,15 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
     )
     substitutions += rebounded
     if substitutions:
-        result.warnings.append(
-            f"{MODEL_REGISTRY[target]} doesn't accept some of the source's setting values; "
-            f"used its own instead ({'; '.join(substitutions)})."
+        result.note(
+            "settings",
+            f"Replaced {len(substitutions)} value(s) the target can't accept",
+            detail="Shared setting names don't guarantee shared values, types or bounds between the two "
+            "forks. Each of these was translated by its human label where possible, and otherwise "
+            "replaced with the target's own value.",
+            items=list(substitutions),
+            warning=f"{MODEL_REGISTRY[target]} doesn't accept some of the source's setting values; "
+            f"used its own instead ({'; '.join(substitutions)}).",
         )
 
     # Drop settings the target stores with a different arity -- typically a
@@ -331,15 +433,26 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
         target_types=load_option_types(_vendor_dir(target)),
     )
     if shape_reshaped:
-        result.warnings.append(
-            f"rewrote {len(shape_reshaped)} setting(s) into the shape {MODEL_REGISTRY[target]} stores "
-            f"them in (e.g. {', '.join(shape_reshaped[:3])}); the values themselves are unchanged."
+        result.note(
+            "settings",
+            f"Reshaped {len(shape_reshaped)} setting(s) into the target's storage arity",
+            detail="A setting one fork stores as a single number the other stores once per extruder. "
+            "The values themselves are unchanged.",
+            items=sorted(shape_reshaped),
+            warning=f"rewrote {len(shape_reshaped)} setting(s) into the shape {MODEL_REGISTRY[target]} stores "
+            f"them in (e.g. {', '.join(shape_reshaped[:3])}); the values themselves are unchanged.",
         )
     if shape_dropped:
-        result.warnings.append(
-            f"dropped {len(shape_dropped)} setting(s) whose per-extruder values disagree and which "
+        result.note(
+            "settings",
+            f"Dropped {len(shape_dropped)} per-extruder setting(s) that disagree across extruders",
+            detail=f"{MODEL_REGISTRY[target]} stores each of these as one value, and the source's "
+            "extruders don't agree on what it should be -- so there is no single correct answer to "
+            "carry over. The target's own value applies.",
+            items=sorted(shape_dropped),
+            warning=f"dropped {len(shape_dropped)} setting(s) whose per-extruder values disagree and which "
             f"{MODEL_REGISTRY[target]} stores as a single value (e.g. {', '.join(shape_dropped[:3])}); "
-            "its own values apply."
+            "its own values apply.",
         )
 
     # Hand the machine layer back to the slicer. Its widths depend on how the
@@ -348,9 +461,15 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
     # core/slicer_owned.py.
     new_config, slicer_keys = strip_slicer_owned(new_config, load_variant_options(_vendor_dir(target)))
     if slicer_keys:
-        result.warnings.append(
-            f"left {len(slicer_keys)} machine setting(s) for {MODEL_REGISTRY[target]}'s slicer to fill in "
-            "from its own presets (nozzle variants, per-extruder kinematics, purge volumes)."
+        result.note(
+            "settings",
+            f"Left {len(slicer_keys)} machine setting(s) for the slicer to fill in",
+            detail="Nozzle variants, per-extruder kinematics, AMS routing and purge matrices can't be "
+            "synthesised statically -- their widths depend on the installed slicer version. Omitting "
+            "them and letting the slicer supply them is what makes the file load.",
+            items=sorted(slicer_keys),
+            warning=f"left {len(slicer_keys)} machine setting(s) for {MODEL_REGISTRY[target]}'s slicer to fill in "
+            "from its own presets (nozzle variants, per-extruder kinematics, purge volumes).",
         )
 
     # The project now names the target's stock print preset while carrying the
@@ -359,16 +478,31 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
     # convert/settings_diff.py for how that failure was found.
     target_print_profile = target_library.get("process", target_print_profile_name)
     if target_print_profile is not None:
-        new_config["different_settings_to_system"] = compute_different_settings_to_system(
+        deviations = compute_different_settings_to_system(
             config=new_config,
             flat_print_profile=flatten("process", target_print_profile, target_library),
             filament_count=result.filament_count,
         )
+        new_config["different_settings_to_system"] = deviations
+        # deviations[0] is the print-config slot; the rest are per-filament.
+        kept = sorted(str(deviations[0]).split(";")) if deviations and deviations[0] else []
+        result.report.add(
+            "process",
+            f"{len(kept)} print setting(s) kept from the source and marked as deviations",
+            detail="Carrying a value over isn't enough: the file has to declare that it differs from the "
+            "preset it names, or the slicer serves the preset's default instead and the source's value "
+            "is silently discarded.",
+            items=kept,
+        )
     else:
-        result.warnings.append(
-            f"target print preset {target_print_profile_name!r} not found in the vendored profile "
+        result.note(
+            "process",
+            "Per-setting deviations could not be marked",
+            detail=f"The target's print preset {target_print_profile_name!r} isn't in the vendored profile "
+            "library, so there was nothing to diff against.",
+            warning=f"target print preset {target_print_profile_name!r} not found in the vendored profile "
             "library, so per-setting deviations couldn't be marked -- the slicer may reset print "
-            "settings (layer height, infill, walls) to its own defaults when opening this file."
+            "settings (layer height, infill, walls) to its own defaults when opening this file.",
         )
 
     archive.set_text("Metadata/project_settings.config", ProjectSettings(data=new_config).to_json())
@@ -389,11 +523,17 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
         target_bed=bed_size(flat_target_machine.get("printable_area")),
     )
     if layout.objects_moved:
-        result.warnings.append(
-            f"re-placed {layout.objects_moved} object(s) across {layout.plate_count} plate(s) for "
-            f"{MODEL_REGISTRY[target]}'s bed."
+        result.note(
+            "geometry",
+            f"Re-placed {layout.objects_moved} object(s) across {layout.plate_count} plate(s)",
+            detail="Object positions are absolute, in a world laid out as a grid of plates spaced from "
+            f"the *source* bed. Left alone they would land outside {MODEL_REGISTRY[target]}'s printable "
+            "area; each object keeps the plate the user put it on.",
+            warning=f"re-placed {layout.objects_moved} object(s) across {layout.plate_count} plate(s) for "
+            f"{MODEL_REGISTRY[target]}'s bed.",
         )
-    result.warnings.extend(layout.warnings)
+    for warning in layout.warnings:
+        result.note("geometry", warning, warning=warning)
 
     # An adaptive layer-height profile is only valid within the target's own
     # nozzle range; leave one height out of bounds and the slicer throws the
@@ -401,21 +541,38 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
     heights = clamp_layer_height_profile(archive, flat_target_machine)
     if heights.points_clamped:
         low, high = heights.allowed
-        result.warnings.append(
-            f"clamped {heights.points_clamped} of {heights.points_total} variable layer-height point(s) "
+        result.note(
+            "geometry",
+            f"Clamped {heights.points_clamped} of {heights.points_total} variable layer-height point(s)",
+            detail=f"A single point outside {MODEL_REGISTRY[target]}'s {low:g}-{high:g} mm nozzle range makes "
+            f"the slicer discard the whole profile, so the {heights.points_clamped} offending point(s) "
+            f"(highest was {heights.extreme:.3f} mm) were pulled into range and the rest kept as designed.",
+            warning=f"clamped {heights.points_clamped} of {heights.points_total} variable layer-height point(s) "
             f"into {MODEL_REGISTRY[target]}'s {low:g}-{high:g} mm range (highest was {heights.extreme:.3f} mm); "
-            "the rest of the profile is preserved."
+            "the rest of the profile is preserved.",
         )
 
     paint_report = remap_paint_colors(archive, mapping.slot_map, max_target_slot=result.filament_count)
     if paint_report.out_of_range:
-        result.warnings.append(
-            f"{len(paint_report.out_of_range)} painted triangle(s) reference a color slot "
-            "beyond the target's filament list -- check paint in the slicer before printing."
+        result.note(
+            "paint",
+            f"{len(paint_report.out_of_range)} painted triangle(s) point past the target's filament list",
+            detail="Their colour slot doesn't exist on the target, so the slicer will fall back to the "
+            "object's base filament for those facets.",
+            warning=f"{len(paint_report.out_of_range)} painted triangle(s) reference a color slot "
+            "beyond the target's filament list -- check paint in the slicer before printing.",
         )
 
-    for name in list(archive.names()):
-        if _is_dropped_file(name):
-            archive.remove(name)
+    dropped_files = [name for name in archive.names() if _is_dropped_file(name)]
+    for name in dropped_files:
+        archive.remove(name)
+    if dropped_files:
+        result.report.add(
+            "files",
+            f"Removed {len(dropped_files)} bundled file(s) belonging to the source printer",
+            detail="Numbered preset snapshots and cached slice results describe the source machine and "
+            "would contradict the converted config. The slicer rebuilds them on the next slice.",
+            items=sorted(dropped_files),
+        )
 
     return archive, result

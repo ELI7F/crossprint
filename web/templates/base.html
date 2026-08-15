@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Crossprint — move a 3MF project between printers{% endblock %}</title>
+<meta name="description" content="{% block description %}Convert sliced 3MF projects between Snapmaker U1 and Bambu Lab printers, in either direction. Keeps geometry, colours, painting and print settings.{% endblock %}">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #faf9f7;
+    --bg-accent: #f2efea;
+    --card: #ffffff;
+    --text: #191817;
+    --muted: #6d6862;
+    --faint: #948f88;
+    --border: #e2ddd6;
+    --accent: #b4502c;
+    --accent-soft: #f6ebe5;
+    --accent-text: #ffffff;
+    --u1: #2f7d6d;
+    --bambu: #1f6f4a;
+    --ok-bg: #ecf4ec; --ok-text: #205c30;
+    --warn-bg: #fdf3e0; --warn-text: #7a5709;
+    --err-bg: #fceae7; --err-text: #9a2c17;
+    --mono: ui-monospace, "SFMono-Regular", Consolas, Menlo, monospace;
+    --shadow: 0 1px 2px rgba(25,24,23,.05), 0 8px 24px -12px rgba(25,24,23,.18);
+    --page: 620px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141317; --bg-accent: #1b1a20; --card: #201f25;
+      --text: #f0ede8; --muted: #a09a92; --faint: #7c766e; --border: #333139;
+      --accent: #e07d52; --accent-soft: #2e1f18; --accent-text: #1c0f08;
+      --u1: #56b8a2; --bambu: #58bd85;
+      --ok-bg: #16301f; --ok-text: #8ed5a4;
+      --warn-bg: #352b10; --warn-text: #e6c165;
+      --err-bg: #371813; --err-text: #f0a494;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 28px -14px rgba(0,0,0,.7);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Inter, Arial, sans-serif;
+    line-height: 1.55; min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 26px 20px 40px;
+  }
+  main { width: 100%; max-width: var(--page); }
+
+  /* -- site nav -------------------------------------------------------- */
+  .topnav {
+    width: 100%; max-width: var(--page);
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; margin-bottom: 26px; font-size: .88rem;
+  }
+  .topnav .brand {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-weight: 650; color: var(--text); text-decoration: none; letter-spacing: -.01em;
+  }
+  .topnav .brand svg { width: 19px; height: 19px; color: var(--accent); }
+  .topnav nav { display: flex; gap: 6px; }
+  .topnav nav a {
+    color: var(--muted); text-decoration: none; padding: 6px 11px; border-radius: 999px;
+  }
+  .topnav nav a:hover { background: var(--bg-accent); color: var(--text); }
+  .topnav nav a[aria-current="page"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+  header { text-align: center; margin-bottom: 30px; }
+  .wordmark {
+    display: inline-flex; align-items: center; gap: 9px;
+    font-size: 1.7rem; font-weight: 650; letter-spacing: -.02em; margin: 0;
+  }
+  .wordmark svg { width: 26px; height: 26px; color: var(--accent); }
+  .tagline { margin: 8px 0 0; color: var(--muted); font-size: 1.02rem; }
+
+  /* Bidirectional route indicator — the product's whole point, made visible. */
+  .route-badge {
+    display: inline-flex; align-items: center; gap: 12px;
+    margin-top: 18px; padding: 9px 16px;
+    background: var(--bg-accent); border: 1px solid var(--border);
+    border-radius: 999px; font-size: .87rem; font-weight: 550;
+  }
+  .route-badge .u1 { color: var(--u1); }
+  .route-badge .bambu { color: var(--bambu); }
+  .route-badge .swap { display: inline-flex; color: var(--faint); }
+  .route-badge .swap svg { width: 17px; height: 17px; }
+
+  .dropzone {
+    background: var(--card); border: 2px dashed var(--border); border-radius: 16px;
+    padding: 44px 24px; text-align: center; cursor: pointer;
+    transition: border-color .15s, background .15s, transform .15s;
+  }
+  .dropzone:hover { border-color: var(--faint); }
+  .dropzone.drag {
+    border-color: var(--accent); background: var(--accent-soft); transform: scale(1.01);
+  }
+  .dropzone .icon { width: 38px; height: 38px; color: var(--faint); margin-bottom: 12px; }
+  .dropzone p { margin: 0; font-size: 1rem; }
+  .dropzone .hint { font-size: .85rem; color: var(--muted); margin-top: 6px; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+    padding: 22px; margin-top: 18px; box-shadow: var(--shadow);
+  }
+  .filename {
+    font-family: var(--mono); font-size: .82rem; color: var(--muted); word-break: break-all;
+  }
+
+  .route {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    margin: 14px 0 2px; font-size: 1.12rem; font-weight: 600;
+  }
+  .route .arrow { color: var(--faint); }
+  .meta { color: var(--muted); font-size: .9rem; }
+
+  label.field { display: block; margin-top: 18px; font-size: .85rem; color: var(--muted); }
+  select {
+    font: inherit; width: 100%; margin-top: 6px; padding: 11px 12px;
+    border-radius: 11px; border: 1px solid var(--border);
+    background: var(--card); color: var(--text);
+  }
+  select:focus-visible, .dropzone:focus-visible, a:focus-visible, button:focus-visible,
+  summary:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+
+  button { font: inherit; border: none; border-radius: 11px; padding: 13px 20px; cursor: pointer; }
+  .btn-primary {
+    background: var(--accent); color: var(--accent-text); font-weight: 600;
+    width: 100%; margin-top: 16px; font-size: 1rem;
+  }
+  .btn-primary:disabled { opacity: .6; cursor: default; }
+  .btn-secondary {
+    background: none; color: var(--muted); text-decoration: underline;
+    padding: 10px 0; font-size: .9rem;
+  }
+
+  .banner { border-radius: 13px; padding: 15px 17px; margin-top: 16px; font-size: .9rem; }
+  .banner-ok { background: var(--ok-bg); color: var(--ok-text); }
+  .banner-warn { background: var(--warn-bg); color: var(--warn-text); }
+  .banner-err { background: var(--err-bg); color: var(--err-text); }
+  .banner ul { margin: 8px 0 0; padding-inline-start: 20px; }
+  .banner li + li { margin-top: 5px; }
+  .banner code { font-family: var(--mono); font-size: .85em; }
+
+  .spinner {
+    display: inline-block; width: 15px; height: 15px; vertical-align: -2px;
+    border: 2px solid currentColor; border-top-color: transparent;
+    border-radius: 50%; animation: spin .7s linear infinite; margin-inline-start: 8px; opacity: .8;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* -- change report --------------------------------------------------- */
+  .report { margin-top: 16px; }
+  .report h2 {
+    font-size: .78rem; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--faint); margin: 0 0 10px; font-weight: 650;
+  }
+  .report-group + .report-group { margin-top: 4px; }
+  .report-group > summary {
+    cursor: pointer; list-style: none; padding: 10px 12px; border-radius: 10px;
+    display: flex; align-items: center; gap: 10px; font-size: .9rem;
+  }
+  .report-group > summary::-webkit-details-marker { display: none; }
+  .report-group > summary:hover { background: var(--bg-accent); }
+  .report-group > summary::before {
+    content: "›"; color: var(--faint); font-size: 1.1rem; line-height: 1;
+    transition: transform .15s; display: inline-block;
+  }
+  .report-group[open] > summary::before { transform: rotate(90deg); }
+  .report-group .cat { font-weight: 600; }
+  .report-group .count { color: var(--faint); font-size: .82rem; margin-inline-start: auto; }
+  .report-body { padding: 2px 12px 12px 30px; }
+  .change + .change { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .change .change-title { font-size: .9rem; font-weight: 550; }
+  .change .change-detail { font-size: .84rem; color: var(--muted); margin-top: 3px; }
+  .change .flag {
+    display: inline-block; margin-inline-start: 7px; padding: 1px 7px; border-radius: 999px;
+    background: var(--warn-bg); color: var(--warn-text); font-size: .7rem;
+    font-weight: 650; letter-spacing: .03em; text-transform: uppercase; vertical-align: 1px;
+  }
+  .items {
+    margin: 8px 0 0; padding: 9px 11px; list-style: none;
+    background: var(--bg-accent); border-radius: 9px;
+    font-family: var(--mono); font-size: .76rem; color: var(--muted);
+    max-height: 190px; overflow: auto; overflow-wrap: anywhere;
+  }
+  .items li + li { margin-top: 3px; }
+  .items .omitted { color: var(--faint); font-style: italic; font-family: inherit; }
+
+  /* -- prose (help page) ----------------------------------------------- */
+  .prose h2 {
+    font-size: 1.18rem; letter-spacing: -.01em; margin: 38px 0 10px;
+    padding-top: 20px; border-top: 1px solid var(--border);
+  }
+  .prose h2:first-of-type { border-top: none; padding-top: 0; margin-top: 26px; }
+  .prose h3 { font-size: .98rem; margin: 22px 0 6px; }
+  .prose p, .prose li { font-size: .93rem; }
+  .prose p { margin: 0 0 12px; }
+  .prose ul, .prose ol { margin: 0 0 12px; padding-inline-start: 22px; }
+  .prose li + li { margin-top: 5px; }
+  .prose code {
+    font-family: var(--mono); font-size: .84em;
+    background: var(--bg-accent); padding: 1px 5px; border-radius: 5px;
+  }
+  .prose pre {
+    background: var(--bg-accent); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; overflow-x: auto; font-size: .8rem; margin: 0 0 14px;
+  }
+  .prose pre code { background: none; padding: 0; font-size: 1em; }
+  .prose a { color: var(--accent); }
+  .lede { font-size: 1.02rem; color: var(--muted); margin-bottom: 4px; }
+
+  .keeps { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; margin: 0 0 14px; }
+  .keeps > div {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 13px; padding: 14px 16px;
+  }
+  .keeps h3 { margin: 0 0 8px; font-size: .82rem; text-transform: uppercase; letter-spacing: .06em; }
+  .keeps .yes h3 { color: var(--ok-text); }
+  .keeps .no h3 { color: var(--warn-text); }
+  .keeps ul { margin: 0; padding-inline-start: 18px; }
+  .keeps li { font-size: .86rem; }
+
+  table.models { width: 100%; border-collapse: collapse; font-size: .88rem; margin: 0 0 14px; }
+  table.models th, table.models td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  table.models th { font-size: .74rem; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); }
+  table.models td code { font-size: .82em; }
+  .tag {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    font-size: .72rem; font-weight: 650; letter-spacing: .02em;
+  }
+  .tag-verified { background: var(--ok-bg); color: var(--ok-text); }
+  .tag-besteffort { background: var(--warn-bg); color: var(--warn-text); }
+
+  .faq { margin-top: 4px; }
+  .faq details {
+    border-bottom: 1px solid var(--border);
+  }
+  .faq summary {
+    cursor: pointer; list-style: none; padding: 13px 4px;
+    font-size: .93rem; font-weight: 550;
+    display: flex; align-items: baseline; gap: 10px;
+  }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::before {
+    content: "+"; color: var(--accent); font-weight: 650; font-size: 1rem; line-height: 1;
+  }
+  .faq details[open] summary::before { content: "−"; }
+  .faq summary:hover { color: var(--accent); }
+  .faq .answer { padding: 0 4px 15px 24px; }
+  .faq .answer > :last-child { margin-bottom: 0; }
+
+  footer {
+    width: 100%; max-width: var(--page); margin-top: 34px; padding-top: 22px;
+    border-top: 1px solid var(--border);
+    text-align: center; color: var(--muted); font-size: .82rem;
+  }
+  footer p { margin: 0 0 8px; }
+  footer a { color: var(--muted); }
+  .build {
+    margin-top: 16px; font-size: .74rem; letter-spacing: .04em;
+    color: var(--muted); opacity: .65; font-variant-numeric: tabular-nums;
+  }
+
+  .support { margin-top: 18px; }
+  .btn-donate {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 17px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--card); color: var(--text); text-decoration: none;
+    font-size: .85rem; font-weight: 550; transition: border-color .15s, background .15s;
+  }
+  .btn-donate:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .btn-donate svg { width: 15px; height: 15px; color: var(--accent); }
+  .support-note { display: block; margin-top: 8px; font-size: .78rem; color: var(--faint); }
+
+  [hidden] { display: none !important; }
+  @media (max-width: 520px) {
+    body { padding: 20px 16px 32px; }
+    .wordmark { font-size: 1.45rem; }
+    .keeps { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="topnav">
+  <a class="brand" href="/">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+      <path d="M3 7h12l-3-3M21 17H9l3 3" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    Crossprint
+  </a>
+  <nav>
+    <a href="/" {% if page == 'convert' %}aria-current="page"{% endif %}>Convert</a>
+    <a href="/help" {% if page == 'help' %}aria-current="page"{% endif %}>How it works &amp; FAQ</a>
+    <a href="https://github.com/ELI7F/crossprint" target="_blank" rel="noopener noreferrer">Source</a>
+  </nav>
+</div>
+
+<main>
+{% block content %}{% endblock %}
+</main>
+
+<footer>
+  {% block footer_note %}{% endblock %}
+  {% if hosted %}
+  <p>Files are processed in memory, never written to the server, and gone once your download
+     finishes. For anything confidential, or projects too large for this server,
+     <a href="https://github.com/ELI7F/crossprint">run it locally</a> instead.
+     Files up to {{ upload_limit_mb }} MB.</p>
+  {% else %}
+  <p>Running locally — your files never leave this machine. Upload limit {{ upload_limit_mb }} MB.</p>
+  {% endif %}
+  {% if donate_url %}
+  <div class="support">
+    <a class="btn-donate" href="{{ donate_url }}" target="_blank" rel="noopener noreferrer">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+        <path d="M20.8 5.6a5 5 0 0 0-7.1 0L12 7.3l-1.7-1.7a5 5 0 1 0-7.1 7.1l8.8 8.8 8.8-8.8a5 5 0 0 0 0-7.1z"
+              stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Buy me a coffee
+    </a>
+    <span class="support-note">Free and open source — a tip just helps keep it online.</span>
+  </div>
+  {% endif %}
+  <p class="build">{{ build_id }}</p>
+</footer>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

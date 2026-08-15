@@ -1,169 +1,6 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Crossprint — move a 3MF project between printers</title>
-<meta name="description" content="Convert sliced 3MF projects between Snapmaker U1 and Bambu Lab printers, in either direction. Keeps geometry, colours, painting and print settings.">
-<style>
-  :root {
-    color-scheme: light dark;
-    --bg: #faf9f7;
-    --bg-accent: #f2efea;
-    --card: #ffffff;
-    --text: #191817;
-    --muted: #6d6862;
-    --faint: #948f88;
-    --border: #e2ddd6;
-    --accent: #b4502c;
-    --accent-soft: #f6ebe5;
-    --accent-text: #ffffff;
-    --u1: #2f7d6d;
-    --bambu: #1f6f4a;
-    --ok-bg: #ecf4ec; --ok-text: #205c30;
-    --warn-bg: #fdf3e0; --warn-text: #7a5709;
-    --err-bg: #fceae7; --err-text: #9a2c17;
-    --mono: ui-monospace, "SFMono-Regular", Consolas, Menlo, monospace;
-    --shadow: 0 1px 2px rgba(25,24,23,.05), 0 8px 24px -12px rgba(25,24,23,.18);
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #141317; --bg-accent: #1b1a20; --card: #201f25;
-      --text: #f0ede8; --muted: #a09a92; --faint: #7c766e; --border: #333139;
-      --accent: #e07d52; --accent-soft: #2e1f18; --accent-text: #1c0f08;
-      --u1: #56b8a2; --bambu: #58bd85;
-      --ok-bg: #16301f; --ok-text: #8ed5a4;
-      --warn-bg: #352b10; --warn-text: #e6c165;
-      --err-bg: #371813; --err-text: #f0a494;
-      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 28px -14px rgba(0,0,0,.7);
-    }
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font-family: system-ui, -apple-system, "Segoe UI", Inter, Arial, sans-serif;
-    line-height: 1.55; min-height: 100vh;
-    display: flex; flex-direction: column; align-items: center;
-    padding: 56px 20px 40px;
-  }
-  main { width: 100%; max-width: 620px; }
+{% extends "base.html" %}
 
-  header { text-align: center; margin-bottom: 30px; }
-  .wordmark {
-    display: inline-flex; align-items: center; gap: 9px;
-    font-size: 1.7rem; font-weight: 650; letter-spacing: -.02em; margin: 0;
-  }
-  .wordmark svg { width: 26px; height: 26px; color: var(--accent); }
-  .tagline { margin: 8px 0 0; color: var(--muted); font-size: 1.02rem; }
-
-  /* Bidirectional route indicator — the product's whole point, made visible. */
-  .route-badge {
-    display: inline-flex; align-items: center; gap: 12px;
-    margin-top: 18px; padding: 9px 16px;
-    background: var(--bg-accent); border: 1px solid var(--border);
-    border-radius: 999px; font-size: .87rem; font-weight: 550;
-  }
-  .route-badge .u1 { color: var(--u1); }
-  .route-badge .bambu { color: var(--bambu); }
-  .route-badge .swap { display: inline-flex; color: var(--faint); }
-  .route-badge .swap svg { width: 17px; height: 17px; }
-
-  .dropzone {
-    background: var(--card); border: 2px dashed var(--border); border-radius: 16px;
-    padding: 44px 24px; text-align: center; cursor: pointer;
-    transition: border-color .15s, background .15s, transform .15s;
-  }
-  .dropzone:hover { border-color: var(--faint); }
-  .dropzone.drag {
-    border-color: var(--accent); background: var(--accent-soft); transform: scale(1.01);
-  }
-  .dropzone .icon { width: 38px; height: 38px; color: var(--faint); margin-bottom: 12px; }
-  .dropzone p { margin: 0; font-size: 1rem; }
-  .dropzone .hint { font-size: .85rem; color: var(--muted); margin-top: 6px; }
-
-  .card {
-    background: var(--card); border: 1px solid var(--border); border-radius: 16px;
-    padding: 22px; margin-top: 18px; box-shadow: var(--shadow);
-  }
-  .filename {
-    font-family: var(--mono); font-size: .82rem; color: var(--muted); word-break: break-all;
-  }
-
-  .route {
-    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-    margin: 14px 0 2px; font-size: 1.12rem; font-weight: 600;
-  }
-  .route .arrow { color: var(--faint); }
-  .meta { color: var(--muted); font-size: .9rem; }
-
-  label.field { display: block; margin-top: 18px; font-size: .85rem; color: var(--muted); }
-  select {
-    font: inherit; width: 100%; margin-top: 6px; padding: 11px 12px;
-    border-radius: 11px; border: 1px solid var(--border);
-    background: var(--card); color: var(--text);
-  }
-  select:focus-visible, .dropzone:focus-visible, a:focus-visible, button:focus-visible {
-    outline: 2px solid var(--accent); outline-offset: 2px;
-  }
-
-  button { font: inherit; border: none; border-radius: 11px; padding: 13px 20px; cursor: pointer; }
-  .btn-primary {
-    background: var(--accent); color: var(--accent-text); font-weight: 600;
-    width: 100%; margin-top: 16px; font-size: 1rem;
-  }
-  .btn-primary:disabled { opacity: .6; cursor: default; }
-  .btn-secondary {
-    background: none; color: var(--muted); text-decoration: underline;
-    padding: 10px 0; font-size: .9rem;
-  }
-
-  .banner { border-radius: 13px; padding: 15px 17px; margin-top: 16px; font-size: .9rem; }
-  .banner-ok { background: var(--ok-bg); color: var(--ok-text); }
-  .banner-warn { background: var(--warn-bg); color: var(--warn-text); }
-  .banner-err { background: var(--err-bg); color: var(--err-text); }
-  .banner ul { margin: 8px 0 0; padding-inline-start: 20px; }
-  .banner li + li { margin-top: 5px; }
-  .banner code { font-family: var(--mono); font-size: .85em; }
-
-  .spinner {
-    display: inline-block; width: 15px; height: 15px; vertical-align: -2px;
-    border: 2px solid currentColor; border-top-color: transparent;
-    border-radius: 50%; animation: spin .7s linear infinite; margin-inline-start: 8px; opacity: .8;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  footer {
-    width: 100%; max-width: 620px; margin-top: 34px; padding-top: 22px;
-    border-top: 1px solid var(--border);
-    text-align: center; color: var(--muted); font-size: .82rem;
-  }
-  footer p { margin: 0 0 8px; }
-  footer a { color: var(--muted); }
-  .build {
-    margin-top: 16px; font-size: .74rem; letter-spacing: .04em;
-    color: var(--muted); opacity: .65; font-variant-numeric: tabular-nums;
-  }
-
-  .support { margin-top: 18px; }
-  .btn-donate {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 9px 17px; border-radius: 999px; border: 1px solid var(--border);
-    background: var(--card); color: var(--text); text-decoration: none;
-    font-size: .85rem; font-weight: 550; transition: border-color .15s, background .15s;
-  }
-  .btn-donate:hover { border-color: var(--accent); background: var(--accent-soft); }
-  .btn-donate svg { width: 15px; height: 15px; color: var(--accent); }
-  .support-note { display: block; margin-top: 8px; font-size: .78rem; color: var(--faint); }
-
-  [hidden] { display: none !important; }
-  @media (max-width: 520px) {
-    body { padding: 36px 16px 32px; }
-    .wordmark { font-size: 1.45rem; }
-  }
-</style>
-</head>
-<body>
-<main>
+{% block content %}
   <header>
     <h1 class="wordmark">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
@@ -194,39 +31,27 @@
   </div>
 
   <div id="statusArea"></div>
-</main>
+{% endblock %}
 
-<footer>
-  <p>The source printer is detected from the file. Models marked <em>unverified</em> haven't been
-     checked against a real project from that machine — confirm one opens cleanly before printing.</p>
-  {% if hosted %}
-  <p>Files are processed in memory, never written to the server, and gone once your download
-     finishes. For anything confidential, or projects too large for this server,
-     <a href="https://github.com/ELI7F/crossprint">run it locally</a> instead.
-     Files up to {{ upload_limit_mb }} MB.</p>
-  {% else %}
-  <p>Running locally — your files never leave this machine. Upload limit {{ upload_limit_mb }} MB.</p>
-  {% endif %}
-  {% if donate_url %}
-  <div class="support">
-    <a class="btn-donate" href="{{ donate_url }}" target="_blank" rel="noopener noreferrer">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-        <path d="M20.8 5.6a5 5 0 0 0-7.1 0L12 7.3l-1.7-1.7a5 5 0 1 0-7.1 7.1l8.8 8.8 8.8-8.8a5 5 0 0 0 0-7.1z"
-              stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      Buy me a coffee
-    </a>
-    <span class="support-note">Free and open source — a tip just helps keep it online.</span>
-  </div>
-  {% endif %}
-  <p class="build">{{ build_id }}</p>
-</footer>
+{% block footer_note %}
+  <p>The source printer is detected from the file. Models marked <em>best-effort</em> haven't been
+     checked against a real project from that machine — <a href="/help#verification">what that means</a>.</p>
+{% endblock %}
 
+{% block scripts %}
 <script>
+// Category labels come from the server so the two renderings of a report --
+// this page and the CLI -- can never disagree about what a category is called.
+const CATEGORY_LABELS = {{ categories | tojson }};
+
 const dropzone = document.getElementById('dropzone');
 const fileInput = document.getElementById('fileInput');
 const statusArea = document.getElementById('statusArea');
 let selectedFile = null;
+// The converted project, held here between conversion and download. Keeping it
+// client-side is what lets the change report be shown *before* the file is
+// saved without either converting twice or parking a result on the server.
+let converted = null;
 
 dropzone.addEventListener('click', () => fileInput.click());
 dropzone.addEventListener('keydown', (e) => {
@@ -254,10 +79,15 @@ function showError(message) {
   document.getElementById('retryBtn').addEventListener('click', reset);
 }
 
-function reset() { selectedFile = null; statusArea.innerHTML = ''; }
+function reset() {
+  selectedFile = null;
+  converted = null;
+  statusArea.innerHTML = '';
+}
 
 async function handleFile(file) {
   selectedFile = file;
+  converted = null;
   statusArea.innerHTML =
     `<div class="card"><span class="filename">${esc(file.name)}</span>
      <div class="meta">Reading project<span class="spinner"></span></div></div>`;
@@ -281,7 +111,7 @@ function showReady(file, info) {
   const targets = [...info.availableTargets].sort((a, b) =>
     a.verified !== b.verified ? (a.verified ? -1 : 1) : a.label.localeCompare(b.label));
   const options = targets.map((t) =>
-    `<option value="${t.slug}">${esc(t.label)}${t.verified ? '' : ' — unverified'}</option>`).join('');
+    `<option value="${t.slug}">${esc(t.label)}${t.verified ? '' : ' — best-effort'}</option>`).join('');
 
   statusArea.innerHTML = `
     <div class="card">
@@ -295,14 +125,14 @@ function showReady(file, info) {
       <label class="field" for="targetSelect">Convert to
         <select id="targetSelect">${options}</select>
       </label>
-      <button class="btn-primary" id="convertBtn" type="button">Convert &amp; download</button>
+      <button class="btn-primary" id="convertBtn" type="button">Convert</button>
     </div>
     <button class="btn-secondary" id="retryBtn" type="button">Try another file</button>`;
 
   const select = document.getElementById('targetSelect');
   const targetName = document.getElementById('targetName');
   select.addEventListener('change', () => {
-    targetName.textContent = select.options[select.selectedIndex].text.replace(' — unverified', '');
+    targetName.textContent = select.options[select.selectedIndex].text.replace(' — best-effort', '');
   });
   document.getElementById('convertBtn').addEventListener('click', () => doConvert(select.value));
   document.getElementById('retryBtn').addEventListener('click', reset);
@@ -327,30 +157,102 @@ async function doConvert(target) {
   }
 
   const header = res.headers.get('X-Conversion-Result');
-  const result = header ? JSON.parse(header) : null;
-  const blob = await res.blob();
+  let result = null;
+  try { result = header ? JSON.parse(header) : null; } catch (err) { result = null; }
 
-  const name = `${selectedFile.name.replace(/\.3mf$/i, '')}.${target}.3mf`;
-  const url = URL.createObjectURL(blob);
+  // The trimmed report above always arrives; the full one is compressed and
+  // may not (an old browser, a proxy that strips unknown headers). Detail is
+  // worth asking for and not worth failing over, so this only ever upgrades.
+  const full = await unpackFullReport(res.headers.get('X-Conversion-Report'));
+  if (result && full) result.changes = full;
+
+  converted = {
+    blob: await res.blob(),
+    name: `${selectedFile.name.replace(/\.3mf$/i, '')}.${target}.3mf`,
+  };
+  showDone(converted.name, result);
+}
+
+/* Setting names repeat heavily across a report, so gzip takes the full,
+   untrimmed change list to a fraction of what the trimmed copy costs in a
+   header. Any failure here is silent by design -- see the call site. */
+async function unpackFullReport(packed) {
+  if (!packed || typeof DecompressionStream === 'undefined') return null;
+  try {
+    const bytes = Uint8Array.from(atob(packed), (c) => c.charCodeAt(0));
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return JSON.parse(await new Response(stream).text());
+  } catch (err) {
+    return null;
+  }
+}
+
+function download() {
+  if (!converted) return;
+  const url = URL.createObjectURL(converted.blob);
   const a = document.createElement('a');
-  a.href = url; a.download = name;
+  a.href = url; a.download = converted.name;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
+}
 
-  showDone(name, result);
+/* The change report. Grouped by category, collapsed by default except the
+   groups holding something the user has to act on -- a report that opens
+   everything is as unread as one that opens nothing. */
+function renderReport(changes) {
+  if (!changes || !changes.length) return '';
+
+  const groups = [];
+  for (const change of changes) {
+    const last = groups[groups.length - 1];
+    if (last && last.category === change.category) last.changes.push(change);
+    else groups.push({ category: change.category, changes: [change] });
+  }
+
+  const body = groups.map((group) => {
+    const attention = group.changes.some((c) => c.needsCheck);
+    const label = CATEGORY_LABELS[group.category] || group.category;
+    const entries = group.changes.map((c) => {
+      // Report data is ASCII so the CLI can print it on any console; the
+      // arrow is only made pretty here, where the encoding is UTF-8.
+      const items = (c.items || [])
+        .map((i) => `<li>${esc(i).replace(/ -&gt; /g, ' → ')}</li>`).join('');
+      const omitted = c.omitted ? `<li class="omitted">…and ${c.omitted} more</li>` : '';
+      return `<div class="change">
+        <div class="change-title">${esc(c.title)}${c.needsCheck ? '<span class="flag">check</span>' : ''}</div>
+        ${c.detail ? `<div class="change-detail">${esc(c.detail)}</div>` : ''}
+        ${items || omitted ? `<ul class="items">${items}${omitted}</ul>` : ''}
+      </div>`;
+    }).join('');
+    return `<details class="report-group"${attention ? ' open' : ''}>
+      <summary><span class="cat">${esc(label)}</span>
+        <span class="count">${group.changes.length}</span></summary>
+      <div class="report-body">${entries}</div>
+    </details>`;
+  }).join('');
+
+  return `<div class="report"><h2>What changed</h2>${body}</div>`;
 }
 
 function showDone(name, result) {
   const warnings = (result && result.warnings) || [];
+  const changes = (result && result.changes) || [];
   const warned = warnings.length
     ? `<div class="banner banner-warn"><strong>Worth checking:</strong>
        <ul>${warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div>` : '';
+
   statusArea.innerHTML = `
-    <div class="banner banner-ok">Downloaded <code>${esc(name)}</code> — open it in your slicer to confirm.</div>
+    <div class="card">
+      <div class="banner banner-ok" style="margin-top:0">Converted. Review the changes below,
+        then download and <strong>re-slice</strong> in the target's slicer.</div>
+      <button class="btn-primary" id="downloadBtn" type="button">Download ${esc(name)}</button>
+    </div>
     ${warned}
+    ${renderReport(changes)}
     <button class="btn-secondary" id="retryBtn" type="button">Convert another file</button>`;
+
+  document.getElementById('downloadBtn').addEventListener('click', download);
   document.getElementById('retryBtn').addEventListener('click', reset);
 }
 </script>
-</body>
-</html>
+{% endblock %}

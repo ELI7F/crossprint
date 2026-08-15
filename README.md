@@ -41,10 +41,15 @@ Web UI (drag-and-drop, runs locally on `127.0.0.1:5000`, opens your browser):
 ./run_web.ps1
 ```
 
+It converts, shows you **what changed**, and only then offers the download —
+`/help` explains the whole thing and answers the questions that keep coming up.
+
 CLI:
 
 ```
 .venv/Scripts/python cli.py convert input.3mf --to h2d
+.venv/Scripts/python cli.py convert input.3mf --to h2d --report
+.venv/Scripts/python cli.py convert input.3mf --to u1 --dry-run --json
 .venv/Scripts/python cli.py models
 ```
 
@@ -53,8 +58,25 @@ cases and needs no edits.
 
 Source printer is auto-detected from the file's own `printer_model` — no
 `--from` flag needed. Warnings (unverified target, AMS slot count outside
-the verified reference case, color count beyond U1's 4 simultaneously
-mounted toolheads) print to stderr; the file is still written.
+the verified reference case, an unusual source nozzle) print to stderr; the
+file is still written.
+
+## The change report
+
+Conversion rewrites someone's print recipe, so it says what it did.
+`convert/report.py` records every rewrite, drop and substitution — categorised,
+with the full list of affected setting names — and `ConversionResult.warnings`
+is now the subset flagged as needing a look. `--report` prints all of it,
+`--json` emits it, and the web UI groups it into collapsible sections with the
+ones needing attention already open.
+
+That report crosses HTTP twice, which is the only non-obvious part: a trimmed
+copy in `X-Conversion-Result` that no proxy will object to and that never drops
+a warning, and the untrimmed one gzipped into `X-Conversion-Report`. Setting
+names repeat heavily, so the complete report compresses to *less* than the
+truncated copy costs. The page prefers the full one and silently falls back, so
+a stripped header or an old browser loses detail rather than the report — and
+neither costs a second conversion or parks a result on the server.
 
 ## Tests
 
@@ -62,7 +84,7 @@ mounted toolheads) print to stderr; the file is still written.
 .venv/Scripts/python -m pytest
 ```
 
-173 tests, run against real `.3mf` files rather than synthetic fixtures —
+207 tests, most run against real `.3mf` files rather than synthetic fixtures —
 `tests/conftest.py` points at the user's own Downloads folder and skips
 gracefully if a given sample isn't present.
 
@@ -91,6 +113,7 @@ convert/            the actual conversion logic
   filament_variants.py per-extruder-variant expansion of per-filament settings
   plate_layout.py     re-places objects on the target's bed (multi-plate safe)
   layer_heights.py    clamps a variable layer-height profile into the target's range
+  report.py           the categorised account of what conversion changed, and why
   pipeline.py         model registry + parse -> classify -> map colors -> build -> write
 
 profiles/           vendored official system presets (see SOURCES.md for exact commits)
@@ -102,8 +125,11 @@ tools/extract_vocabulary.py  regenerates those vocabulary files
 tests/test_target_slicer_accepts.py  simulates the target's config loader and
                      asserts our output would load — with real slicer-written
                      files as controls
-web/app.py          Flask UI (localhost only) wrapping convert/pipeline.py
-cli.py              convert <input> --to <model> [-o output] | models
+web/app.py          Flask UI wrapping convert/pipeline.py; serves / and /help
+  templates/base.html  shared shell: theme tokens, nav, footer
+  templates/index.html the converter, and the change-report rendering
+  templates/help.html  how it works, what survives conversion, and the FAQ
+cli.py              convert <input> --to <model> [-o out] [--report|--json] [--dry-run] | models
 ```
 
 If a converted file misbehaves, read **[DEBUGGING.md](DEBUGGING.md)** first — it has
@@ -239,4 +265,7 @@ fails loudly vs. silently) and the ranked future-work list.
   Only matters once color-merging is implemented (identity mappings never
   need to touch them).
 - Only the 0.4mm nozzle preset is targeted for every model; a project using
-  a 0.2/0.6/0.8 nozzle gets converted onto the 0.4 profile.
+  a 0.2/0.6/0.8 nozzle gets converted onto the 0.4 profile. This is now
+  detected from the source's `printer_variant` and reported under "check
+  before printing" rather than passing silently — the file opens and prints
+  either way, so nothing else in it would have told you.

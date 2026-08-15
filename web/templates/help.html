@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+
+{% block title %}How Crossprint works — and answers to the usual questions{% endblock %}
+{% block description %}What survives a 3MF conversion between Snapmaker U1 and Bambu Lab printers, what doesn't, what "best-effort" means, and how to fix a project the slicer complains about.{% endblock %}
+
+{% block content %}
+<div class="prose">
+  <h1 style="margin:0 0 6px; font-size:1.6rem; letter-spacing:-.02em;">How it works</h1>
+  <p class="lede">Crossprint rewrites a sliced <code>.3mf</code> project so a different printer's slicer
+     will open it as its own. It does not re-slice, and it does not touch your models.</p>
+
+  <h2>The one-minute version</h2>
+  <ol>
+    <li><strong>Drop in a <code>.3mf</code> project</strong> saved by Bambu Studio or Snapmaker Orca.
+        The source printer is read from the file — there is nothing to pick.</li>
+    <li><strong>Choose a target printer.</strong> Any direction works, including Bambu&nbsp;→&nbsp;Bambu.</li>
+    <li><strong>Read the change list.</strong> Every rewrite, drop and substitution is shown before you
+        download, grouped by what it touched.</li>
+    <li><strong>Download, open in the target's slicer, and re-slice.</strong> That last step is not
+        optional — see below.</li>
+  </ol>
+
+  <h2>Why you always have to re-slice</h2>
+  <p>A saved project holds two very different things: the recipe (models, colours, painting, print
+     settings) and the result (toolpaths and G-code for one specific machine). Toolpaths are
+     computed for a particular bed, hotend, kinematics and filament routing, and no amount of
+     rewriting turns one printer's toolpaths into another's.</p>
+  <p>So Crossprint carries the recipe across and deliberately discards the cached slice. Open the
+     converted file and press Slice; the target's slicer produces its own G-code from your settings.</p>
+
+  <h2>What comes across, and what doesn't</h2>
+  <div class="keeps">
+    <div class="yes">
+      <h3>Carried over</h3>
+      <ul>
+        <li>All model geometry, untouched</li>
+        <li>Object positions, re-placed onto the target's bed</li>
+        <li>Multi-plate layout</li>
+        <li>Filament colours, types and slot order</li>
+        <li>Per-triangle colour painting</li>
+        <li>Support and seam painting</li>
+        <li>Your print settings — layer height, walls, infill, speeds — marked as deviations so the
+            slicer honours them instead of its own defaults</li>
+        <li>Variable layer-height profiles, clamped into the target's nozzle range</li>
+        <li>Modifiers and per-object settings that both slicers define</li>
+      </ul>
+    </div>
+    <div class="no">
+      <h3>Not carried over</h3>
+      <ul>
+        <li>Cached toolpaths and G-code — by design, see above</li>
+        <li>Settings the target's slicer has no definition for</li>
+        <li>Machine settings: nozzle variants, per-extruder kinematics, AMS routing, purge matrices.
+            The slicer fills these from its own presets, which is what makes the file load at all</li>
+        <li>Custom filament preset definitions — each filament is re-pointed at a real preset the
+            target actually ships</li>
+        <li>Nozzle sizes other than 0.4 mm: every target is the 0.4 mm profile</li>
+      </ul>
+    </div>
+  </div>
+  <p>The change list you get after converting is the authoritative version of this table for
+     <em>your</em> file, down to the individual setting names.</p>
+
+  <h2 id="report">Reading the change list</h2>
+  <p>Changes are grouped by what they touched. Anything tagged <span class="flag"
+     style="display:inline-block;padding:1px 7px;border-radius:999px;background:var(--warn-bg);color:var(--warn-text);font-size:.7rem;font-weight:650;text-transform:uppercase;">check</span>
+     is something worth your eyes before you print; the rest is bookkeeping you can ignore unless
+     something looks wrong later.</p>
+  <ul>
+    {% for slug, label in categories.items() %}
+    <li><strong>{{ label }}</strong> —
+      {% if slug == 'printer' %}the identity fields that make the file claim to be a project for the target machine.
+      {% elif slug == 'process' %}which stock print preset the project now names, and which of your own values were marked as deviating from it.
+      {% elif slug == 'filaments' %}each filament re-pointed from a preset the target has never heard of to one it ships.
+      {% elif slug == 'colors' %}colour slot mapping and, on multi-hotend targets, physical extruder and AMS routing.
+      {% elif slug == 'settings' %}the reconciliation work: settings dropped, values substituted, arrays reshaped, machine fields handed back to the slicer.
+      {% elif slug == 'geometry' %}objects re-placed for the target's bed, and layer-height profiles clamped to its nozzle range.
+      {% elif slug == 'paint' %}painted facets whose colour slot doesn't exist on the target.
+      {% elif slug == 'files' %}preset snapshots and slice caches belonging to the source printer, removed.
+      {% elif slug == 'verify' %}things only you can confirm — an unverified target, an unusual nozzle.
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+
+  <h2 id="verification">Supported printers, and how far each is verified</h2>
+  <p><strong>Verified</strong> means the output was checked field-by-field against a real project file
+     saved by that printer's own slicer, and opened in that slicer to confirm geometry, colours and
+     print recipe survived. <strong>Best-effort</strong> means the same mechanism, applied to a model
+     in the same hardware class, with no real sample to check against. Best-effort conversions work —
+     they are just worth opening and eyeballing before you commit filament to them.</p>
+  <table class="models">
+    <thead><tr><th>Printer</th><th>CLI slug</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for m in models %}
+      <tr>
+        <td>{{ m.label }}</td>
+        <td><code>{{ m.slug }}</code></td>
+        <td>{% if m.verified %}<span class="tag tag-verified">verified</span>{% else %}<span class="tag tag-besteffort">best-effort</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p>A file from any printer outside this list is rejected with a clear message rather than converted
+     on a guess.</p>
+
+  <h2>Running it yourself</h2>
+  <p>The hosted converter has upload limits and a queue. The same code runs locally with neither, and
+     your files never leave your machine:</p>
+  <pre><code>git clone https://github.com/ELI7F/crossprint
+cd crossprint
+python -m venv .venv
+.venv/Scripts/pip install -r requirements.txt
+./run_web.ps1</code></pre>
+  <p>There is a command line too, including a dry run that reports what would change without writing
+     anything:</p>
+  <pre><code>python cli.py convert project.3mf --to h2d --report
+python cli.py convert project.3mf --to u1 --dry-run --json
+python cli.py models</code></pre>
+
+  <h2>Frequently asked questions</h2>
+  <div class="faq">
+    <details>
+      <summary>Will my colour painting survive?</summary>
+      <div class="answer">
+        <p>Yes. Per-triangle paint is stored as a packed encoding referencing colour slots, and
+           Crossprint remaps those slots along with the filament list, so painted facets keep pointing
+           at the colour you painted them. If the target ends up with fewer slots than a painted facet
+           references, that is reported under <em>Colour painting</em> rather than silently changing
+           your artwork.</p>
+      </div>
+    </details>
+    <details>
+      <summary>The converted file opens but all my print settings are back to defaults.</summary>
+      <div class="answer">
+        <p>That is the failure mode this tool was largely built to eliminate, so first check the change
+           list for <em>Print profile</em> — it names how many of your settings were marked as
+           deviations. Zero there means the target's print preset wasn't found and the slicer fell back
+           to its own values; the report says so explicitly.</p>
+        <p>If the count is healthy and the settings are still wrong, that is a bug worth
+           <a href="https://github.com/ELI7F/crossprint/issues">reporting</a> — include the source file
+           if you can.</p>
+      </div>
+    </details>
+    <details>
+      <summary>My slicer says "invalid configuration file" or shows no geometry.</summary>
+      <div class="answer">
+        <p>Those two messages usually have the same cause: the config load threw partway through, so
+           the model was never read. It means a setting value the target can't parse got through.
+           Please <a href="https://github.com/ELI7F/crossprint/issues">open an issue</a> with the source
+           file and the target you picked — every instance of this so far has been a specific,
+           fixable disagreement between the two slicer forks.</p>
+        <p>Check first that you're running a current version of the target's slicer. The vocabulary
+           Crossprint filters against comes from recent builds, and a much older slicer may not define
+           settings that are perfectly valid today.</p>
+      </div>
+    </details>
+    <details>
+      <summary>What happens with more colours than the target can hold?</summary>
+      <div class="answer">
+        <p>On a Snapmaker U1 the answer is nothing special: four toolheads are mounted at once, but the
+           total colour count per print isn't capped — beyond four the printer prompts you to swap
+           spools, and that needs no extra data in the file.</p>
+        <p>On Bambu targets with an enforced capacity, conversion stops with an error naming the
+           numbers instead of merging colours for you. Silently deciding which two of your colours
+           become one would change your model without asking.</p>
+      </div>
+    </details>
+    <details>
+      <summary>Can I convert a <code>.gcode.3mf</code> or a plain STL?</summary>
+      <div class="answer">
+        <p>No. A <code>.gcode.3mf</code> is sliced output with no editable project inside, and an STL
+           has no print recipe to carry over — there would be nothing to convert. Crossprint needs a
+           project file saved from the slicer (in Bambu Studio and Snapmaker Orca: <em>File → Save
+           Project As</em>).</p>
+      </div>
+    </details>
+    <details>
+      <summary>Why does my object land somewhere else on the plate?</summary>
+      <div class="answer">
+        <p>It shouldn't — it should land in the same relative spot on a differently sized bed. Object
+           positions in a 3MF are absolute coordinates in a world laid out as a grid of plates spaced
+           from the <em>source</em> printer's bed size. Converting without touching them puts an
+           11-plate small-bed project entirely outside a large printer's printable area. Crossprint
+           re-places each object using the slicer's own layout rule, keeping it on the plate you put it
+           on, and reports how many objects it moved.</p>
+      </div>
+    </details>
+    <details>
+      <summary>Is my file uploaded anywhere?</summary>
+      <div class="answer">
+        {% if hosted %}
+        <p>On this hosted instance your file is sent to the server, converted in memory, and gone once
+           your download finishes. Nothing is written to disk permanently, and nothing is logged about
+           the contents. If that isn't good enough for a given project — and for anything commercially
+           sensitive it shouldn't be — run it locally, where the file never leaves your machine.</p>
+        {% else %}
+        <p>No. You're running this locally: the file goes from your browser to a server on your own
+           machine and back, and no network request leaves it.</p>
+        {% endif %}
+      </div>
+    </details>
+    <details>
+      <summary>Does it work with a 0.2, 0.6 or 0.8&nbsp;mm nozzle?</summary>
+      <div class="answer">
+        <p>It converts, but every target is the 0.4&nbsp;mm profile. If your source project was sliced
+           for a different nozzle, the change list says so under <em>Check before printing</em>: your
+           line widths and flow come across as you set them, onto a profile built around a nozzle they
+           weren't chosen for. Review those before printing.</p>
+      </div>
+    </details>
+    <details>
+      <summary>Is it free? What's the licence?</summary>
+      <div class="answer">
+        <p>Free, and open source under AGPL-3.0 — including commercial use, provided you publish your
+           changes if you host a modified copy. The source is on
+           <a href="https://github.com/ELI7F/crossprint">GitHub</a>. The AGPL follows from the vendored
+           printer presets, which come from BambuStudio and Snapmaker Orca.</p>
+      </div>
+    </details>
+    <details>
+      <summary>Something converted badly. What's useful in a bug report?</summary>
+      <div class="answer">
+        <p>The source <code>.3mf</code>, the target you picked, the change list (the CLI's
+           <code>--json</code> gives it in full), and what the slicer did that it shouldn't have. If
+           you can, also save the same project from the target's slicer with <em>Save Project As</em>
+           — a correct file for the same models is the single most useful thing for diffing against.</p>
+      </div>
+    </details>
+  </div>
+</div>
+{% endblock %}

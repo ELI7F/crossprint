@@ -33,6 +33,19 @@ questions that no amount of format reasoning can:
 - what array widths it actually uses (these are version-dependent),
 - which of our keys it never writes at all.
 
+Before any of that, ask the converter what it did:
+
+```
+python cli.py convert suspect.3mf --to h2c --dry-run --json
+```
+
+`--dry-run` writes nothing, and the JSON names every setting that was dropped,
+substituted, reshaped or handed back to the slicer. Most reports of "it opened
+but my settings are wrong" are answered there — a key you expected to survive
+sitting in the dropped list, or a deviation count of zero — without opening a
+slicer at all. It narrows *where* to look; it is not evidence about *why* (see
+the one rule above).
+
 ## Bisecting a rejected file
 
 Both slicers reject a bad config with a single unhelpful message, so bisect.

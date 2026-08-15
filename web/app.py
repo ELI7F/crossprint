@@ -20,6 +20,8 @@ of memory.
 """
 from __future__ import annotations
 
+import base64
+import gzip
 import json
 import os
 import subprocess
@@ -44,6 +46,7 @@ from convert.pipeline import (  # noqa: E402
     convert,
     inspect_source,
 )
+from convert.report import CATEGORY_LABELS  # noqa: E402
 
 # A PaaS always supplies PORT; its presence is what distinguishes "hosted"
 # from "someone ran run_web.ps1 on their own machine".
@@ -128,13 +131,63 @@ def _source_info_json(info: SourceInfo) -> dict:
     }
 
 
-def _result_json(result: ConversionResult) -> dict:
-    return {
+# The change report rides back on a response header next to the file itself,
+# so the page can show a diff without paying for a second conversion or
+# parking the converted project on the server waiting to be collected.
+#
+# Headers are not a place for unbounded data, and this report genuinely is
+# unbounded: a real U1 -> H2C conversion names 173 dropped settings, 78
+# slicer-owned ones and 53 regenerated ones. So it goes back twice.
+#
+#   X-Conversion-Result  plain JSON, trimmed to fit a budget small enough that
+#                        no proxy will object. Always present, always parseable,
+#                        carries every warning untrimmed.
+#   X-Conversion-Report  the same report with nothing trimmed, gzipped and
+#                        base64'd -- setting names repeat heavily, so even
+#                        after base64 the complete list costs less than the
+#                        trimmed copy of it (measured on a real U1 -> H2C
+#                        conversion: 15.1 KB of JSON, 5.6 KB on the wire,
+#                        against 5.9 KB for the trimmed one).
+#
+# The page prefers the full one and falls back to the trimmed one, so a
+# browser without DecompressionStream, or a proxy that strips the header,
+# loses detail rather than the report.
+_REPORT_HEADER_BUDGET = 6000
+
+# A ceiling for the compressed copy, so a pathological project can't push the
+# response headers into territory a proxy would reject. Nothing real comes
+# close: the noisiest sample to hand lands at 5.6 KB. Past this the header is
+# dropped entirely rather than sent oversized, and the page falls back.
+_FULL_REPORT_CEILING = 48000
+
+
+def _result_header(result: ConversionResult) -> str:
+    """The result metadata as one ASCII header value, kept under budget.
+
+    Warnings are load-bearing and short, so they are never trimmed; the
+    change report's item lists absorb whatever room is left. `ensure_ascii`
+    is not optional here -- a header carrying a raw non-ASCII byte is a
+    protocol error, and filament and preset names come from user files.
+    """
+    envelope = {
         "sourceVendor": result.source_vendor,
         "targetVendor": result.target_vendor,
         "filamentCount": result.filament_count,
         "warnings": result.warnings,
     }
+    fixed = len(json.dumps({**envelope, "changes": []}, ensure_ascii=True))
+    envelope["changes"] = result.report.to_json(
+        max_items=25, budget_bytes=max(0, _REPORT_HEADER_BUDGET - fixed)
+    )
+    return json.dumps(envelope, ensure_ascii=True)
+
+
+def _full_report_header(result: ConversionResult) -> str | None:
+    """The untrimmed report, gzipped and base64'd, or None if it won't fit."""
+    packed = base64.b64encode(
+        gzip.compress(json.dumps(result.report.to_json(), ensure_ascii=True).encode("ascii"), mtime=0)
+    ).decode("ascii")
+    return packed if len(packed) <= _FULL_REPORT_CEILING else None
 
 
 class UploadRejected(Exception):
@@ -203,13 +256,45 @@ def healthz():
                    uploadLimitMb=MAX_UPLOAD_BYTES // (1024 * 1024))
 
 
+def _page_context(page: str) -> dict:
+    # `hosted` drives the privacy wording: the local build can honestly promise
+    # files never leave the machine, and the hosted one must not. `page` is
+    # passed rather than set in the template so the nav's current-page marking
+    # doesn't depend on how Jinja scopes a child template's top-level assigns.
+    return {
+        "page": page,
+        "hosted": _HOSTED,
+        "donate_url": DONATE_URL,
+        "build_id": BUILD_ID,
+        "upload_limit_mb": MAX_UPLOAD_BYTES // (1024 * 1024),
+        # The page renders the change report client-side, so it needs the same
+        # category labels the CLI prints -- one source, two renderings.
+        "categories": CATEGORY_LABELS,
+    }
+
+
 @app.get("/")
 def index():
-    # `hosted` drives the privacy wording: the local build can honestly promise
-    # files never leave the machine, and the hosted one must not.
-    return render_template("index.html", hosted=_HOSTED, donate_url=DONATE_URL,
-                           build_id=BUILD_ID,
-                           upload_limit_mb=MAX_UPLOAD_BYTES // (1024 * 1024))
+    return render_template("index.html", **_page_context("convert"))
+
+
+@app.get("/help")
+def help_page():
+    """The explanation the converter itself can't give you mid-upload.
+
+    Everything here answers a question that has actually come up: what
+    survives conversion, what "unverified" means, why a converted project
+    must be re-sliced, and what to do when the slicer complains. A tool that
+    rewrites someone's print recipe owes them a readable account of it.
+    """
+    return render_template(
+        "help.html",
+        models=[
+            {"slug": slug, "label": label, "verified": slug in _WELL_VERIFIED_MODELS}
+            for slug, label in sorted(MODEL_REGISTRY.items(), key=lambda kv: (kv[0] not in _WELL_VERIFIED_MODELS, kv[1]))
+        ],
+        **_page_context("help"),
+    )
 
 
 @app.post("/api/inspect")
@@ -277,10 +362,14 @@ def api_convert():
         download_name=download_name,
         mimetype="application/octet-stream",
     )
-    # Result metadata rides along as a header (all ASCII -- warnings are
-    # deliberately English, see color_mapping.py) so the page can show
-    # warnings without a second round trip; same-origin, so no CORS needed.
-    response.headers["X-Conversion-Result"] = json.dumps(_result_json(result))
+    # Result metadata rides along as a header so the page can show the full
+    # change report without a second round trip -- and, more to the point,
+    # without converting the project twice to produce it. Same-origin, so no
+    # CORS exposure needed.
+    response.headers["X-Conversion-Result"] = _result_header(result)
+    full = _full_report_header(result)
+    if full is not None:
+        response.headers["X-Conversion-Report"] = full
     return response
 
 
