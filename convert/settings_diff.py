@@ -149,24 +149,82 @@ def _same_value(a, b) -> bool:
     return str(a) == str(b)
 
 
+def diff_filament_slot(
+    config: dict,
+    flat_filament_profile: dict,
+    slot: int,
+    filament_count: int,
+) -> list[str]:
+    """Keys where one filament slot deviates from the preset it names.
+
+    Filament settings live in the same flat config as everything else, but as
+    arrays with one entry per filament, so a slot's value is `config[key][slot]`
+    against the preset's single value.
+
+    Two guards keep this from ever asserting a deviation it cannot substantiate:
+
+    - **Only arrays exactly `filament_count` long are compared.** A dual-hotend
+      target stores per-filament settings once per *extruder variant*, so the
+      array is `filament_count x variants` and index `slot` is not that slot's
+      value at all -- see convert/filament_variants.py. Diffing those would
+      compare a filament against a different filament's preset. Skipping them
+      leaves that target exactly where it was before this function existed.
+    - **Only single-valued preset entries are compared.** A preset key that is
+      itself an array of several values isn't a scalar this slot can differ
+      from, and guessing which element to use would be inventing data.
+
+    As everywhere in this module, iterating the preset is what keeps the result
+    inside the target's vocabulary.
+    """
+    deviations = []
+    for key, preset_value in flat_filament_profile.items():
+        if key in _NOT_A_SETTING:
+            continue
+        current = config.get(key)
+        if not isinstance(current, list) or len(current) != filament_count:
+            continue
+        if isinstance(preset_value, list):
+            if len(preset_value) != 1:
+                continue
+            preset_value = preset_value[0]
+        if not _same_value(current[slot], preset_value):
+            deviations.append(key)
+    return sorted(deviations)
+
+
 def compute_different_settings_to_system(
     config: dict,
     flat_print_profile: dict,
     filament_count: int,
+    flat_filament_profiles: list[dict | None] | None = None,
 ) -> list[str]:
     """Build the field for a converted project.
 
-    Only the print section is populated -- it carries the user's recipe, and
-    its loss is what prompted this module.
+    The print section carries the user's recipe, and its loss is what prompted
+    this module.
 
-    The filament sections are deliberately left empty. Filament values pass
-    through conversion untouched but keep their *source* preset names, which
-    generally don't exist in the target's library at all (a U1 project's
-    "Panchroma PLA Matte @U1" has no counterpart under Bambu's). There is no
-    target preset to meaningfully diff them against, and the source's own
-    entries can't be reused because they name source-slicer-only settings.
+    The filament sections were once deliberately left empty, on the reasoning
+    that a converted project keeps its *source* filament preset names -- and a
+    U1 project's "Panchroma PLA Matte @U1" has no counterpart in Bambu's
+    library, so there would be nothing to diff against. That reasoning went
+    stale: convert/filament_mapping.py now re-points every slot at a real
+    system preset of the *target* vendor, which is exactly the thing to diff
+    against, and nobody revisited the decision.
 
-    The printer section is likewise always empty: conversion rebuilds machine
+    The cost was the same failure the print section exists to prevent, one
+    scope down. A 14-colour P1S project converted to U1 had every slot differing
+    from the preset it now named -- bed temperature 55 against the preset's 65,
+    max volumetric speed 18/21/22 against 15, flow ratio 0.98 against 0.95 on
+    the carbon-fibre slots -- and declared none of it, so Snapmaker Orca served
+    its own values for all fourteen. The user's report was again "the settings
+    don't come across", and again they were right.
+
+    `flat_filament_profiles` is one flattened target preset per slot, in slot
+    order, `None` for any slot whose preset could not be resolved. Omitting the
+    argument keeps the old all-empty behaviour, so a caller that has no preset
+    library to hand is never forced to guess.
+
+    The printer section is always empty: conversion rebuilds machine
     configuration wholesale from the target's own preset, so by construction
     nothing in it is a user deviation -- and an empty section is what makes
     the slicer normalize any machine-scoped value that leaked through from the
@@ -178,4 +236,14 @@ def compute_different_settings_to_system(
     "preset describes capability, not instantiation" trap documented in
     convert/color_mapping.py.
     """
-    return [";".join(diff_against_preset(config, flat_print_profile))] + [""] * filament_count + [""]
+    if flat_filament_profiles is None:
+        filament_sections = [""] * filament_count
+    else:
+        filament_sections = [
+            ";".join(diff_filament_slot(config, profile, slot, filament_count)) if profile else ""
+            for slot, profile in enumerate(flat_filament_profiles[:filament_count])
+        ]
+        # A short list would silently shorten the field, and its length is part
+        # of the format the slicer parses.
+        filament_sections += [""] * (filament_count - len(filament_sections))
+    return [";".join(diff_against_preset(config, flat_print_profile))] + filament_sections + [""]

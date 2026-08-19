@@ -25,6 +25,7 @@ construction.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from core.preset_resolver import PresetLibrary, flatten
@@ -58,16 +59,41 @@ def _preset_type(library: PresetLibrary, name: str) -> str | None:
     return value
 
 
-def _score(name: str, model_tag: str) -> tuple:
-    """Rank candidate presets: exact printer tag first, then a preferred
-    variant, then the shortest name (which is Bambu's un-suffixed default --
-    "Bambu PLA Basic @BBL H2C" beats "... @BBL H2C 0.2 nozzle")."""
+_NOZZLE_SUFFIX = re.compile(r"(\d+(?:\.\d+)?)\s*nozzle", re.IGNORECASE)
+
+
+def _nozzle_rank(name: str, nozzle: str) -> int:
+    """How well a preset's nozzle qualifier fits the project's nozzle.
+
+    Vendors publish a material three ways: unqualified ("Snapmaker PLA Basic
+    @U1"), and per nozzle ("... @U1 0.4 nozzle", "... 0.6 nozzle"). Ranking is
+    unqualified, then the matching nozzle, then any other -- deliberately in
+    that order. Unqualified first preserves the behaviour verified against real
+    project files for the common materials; the point of this function is only
+    to stop a *wrong* nozzle winning when no unqualified preset exists.
+
+    That was a real defect: a 0.4 mm project's PLA-CF slots were mapped to
+    "Generic PLA-CF @U1 0.6 nozzle" while "Snapmaker PLA-CF @U1 0.4 nozzle"
+    sat unused in the same library. Neither name carries a preferred variant
+    word, so the tie fell through to "shortest name" -- and the 0.6 preset's
+    name is three characters shorter.
+    """
+    match = _NOZZLE_SUFFIX.search(name)
+    if match is None:
+        return 0
+    return 1 if match.group(1) == nozzle else 2
+
+
+def _score(name: str, model_tag: str, nozzle: str) -> tuple:
+    """Rank candidate presets: exact printer tag first, then nozzle fit, then a
+    preferred variant, then the shortest name (which is Bambu's un-suffixed
+    default -- "Bambu PLA Basic @BBL H2C" beats "... @BBL H2C 0.2 nozzle")."""
     variant_rank = len(_PREFERRED_VARIANTS)
     for i, variant in enumerate(_PREFERRED_VARIANTS):
         if variant in name:
             variant_rank = i
             break
-    return (0 if model_tag in name else 1, variant_rank, len(name), name)
+    return (0 if model_tag in name else 1, _nozzle_rank(name, nozzle), variant_rank, len(name), name)
 
 
 def map_filaments_to_target(
@@ -75,11 +101,14 @@ def map_filaments_to_target(
     target_library: PresetLibrary,
     model_tag: str,
     fallback_preset: str | None,
+    nozzle: str = "0.4",
 ) -> FilamentMappingResult:
     """Pick a target system filament preset per source filament.
 
     `model_tag` is the printer's marker inside preset names ("@BBL H2C",
-    "@U1"), used to prefer presets tuned for this exact printer.
+    "@U1"), used to prefer presets tuned for this exact printer. `nozzle` keeps
+    a preset published for a different nozzle from being chosen when one for
+    this nozzle exists -- see `_nozzle_rank`.
     """
     candidates: dict[str, list[str]] = {}
     for name in target_library.names("filament"):
@@ -90,7 +119,7 @@ def map_filaments_to_target(
         if material:
             candidates.setdefault(material, []).append(name)
     for material in candidates:
-        candidates[material].sort(key=lambda n: _score(n, model_tag))
+        candidates[material].sort(key=lambda n: _score(n, model_tag, nozzle))
 
     resolved: list[str] = []
     unmatched: set[str] = set()

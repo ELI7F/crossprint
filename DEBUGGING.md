@@ -310,3 +310,39 @@ reference into a library the target does not have. Worth asking of any field
 that survives conversion -- does this name something that only exists on the
 source machine? `tests/test_pipeline.py` now scans the entire output config for
 any string naming the source vendor and fails on a single hit.
+
+## Deviations are per-scope, and the scopes were not finished (2026-08-19)
+
+A 14-colour P1S project converted to U1 opened with the wrong bed temperature,
+the wrong max volumetric speed and the wrong flow ratio on the carbon-fibre
+slots. The values were correct in the converted file the whole time.
+
+This is the *same* bug as the original `different_settings_to_system` failure,
+one scope down. That field has one section per scope -- print, then one per
+filament, then printer -- and only the print section had ever been computed.
+The filament sections were left empty on the reasoning that a converted project
+keeps its source filament preset names, so there is nothing in the target's
+library to diff against.
+
+That reasoning was true when written and stopped being true when
+`convert/filament_mapping.py` started re-pointing every slot at a real system
+preset of the target vendor. Nobody went back. All 14 slots differed from the
+preset they now named -- 14 to 18 keys each -- and declared none of it, so
+Snapmaker Orca served its own values for every one.
+
+**When a decision is justified by a fact about another module, that decision
+has to be revisited when the other module changes.** The comment explaining why
+the sections were empty was still there, still well argued, and no longer
+describing the code around it. A stale rationale reads exactly like a live one.
+
+Worth asking of the remaining empty scope too: the printer section is empty by a
+different argument -- conversion rebuilds machine config wholesale, so nothing
+in it is a user deviation -- and that one still holds, because it is a fact
+about this pipeline rather than about another module's behaviour.
+
+The same investigation turned up a second defect in one line of ranking code:
+a 0.4 mm project's PLA-CF slots were mapped to `Generic PLA-CF @U1 0.6 nozzle`
+while `Snapmaker PLA-CF @U1 0.4 nozzle` sat unused. Neither name carries a
+preferred-variant word, so the tie fell through to "shortest name" -- and the
+wrong-nozzle preset's name is three characters shorter. Tie-breakers chosen for
+cosmetics decide real questions once the meaningful keys tie.

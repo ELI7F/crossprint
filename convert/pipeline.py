@@ -318,6 +318,10 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
         target_library=target_library,
         model_tag=_model_tag(target),
         fallback_preset=(flat_target_machine.get("default_filament_profile") or [None])[0],
+        # Only the 0.4 profile is targeted for every model, so this is the
+        # nozzle the filament presets have to match -- picking one published
+        # for a different nozzle is what this prevents.
+        nozzle=str(new_config.get("printer_variant") or "0.4"),
     )
     new_config["filament_settings_id"] = filament_mapping.filament_settings_id
     # The catalogue codes must move with the names. Rewriting one and not the
@@ -478,10 +482,22 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
     # convert/settings_diff.py for how that failure was found.
     target_print_profile = target_library.get("process", target_print_profile_name)
     if target_print_profile is not None:
+        # One flattened target preset per slot, in slot order. Each slot's
+        # values have to be declared against the preset that slot now names, or
+        # the slicer serves the preset's own -- the same failure the print
+        # section prevents, one scope down. See convert/settings_diff.py.
+        flat_filament_profiles: list[dict | None] = []
+        for preset_name in filament_mapping.filament_settings_id:
+            preset = target_library.get("filament", preset_name) if preset_name else None
+            flat_filament_profiles.append(
+                flatten("filament", preset, target_library) if preset is not None else None
+            )
+
         deviations = compute_different_settings_to_system(
             config=new_config,
             flat_print_profile=flatten("process", target_print_profile, target_library),
             filament_count=result.filament_count,
+            flat_filament_profiles=flat_filament_profiles,
         )
         new_config["different_settings_to_system"] = deviations
         # deviations[0] is the print-config slot; the rest are per-filament.
@@ -494,6 +510,21 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
             "is silently discarded.",
             items=kept,
         )
+        filament_marked = sum(len(str(s).split(";")) for s in deviations[1:-1] if s)
+        if filament_marked:
+            slots_with = [
+                f"slot {i + 1} ({filament_mapping.filament_settings_id[i]}): {len(str(s).split(';'))}"
+                for i, s in enumerate(deviations[1:-1])
+                if s
+            ]
+            result.report.add(
+                "filaments",
+                f"{filament_marked} filament setting(s) across {len(slots_with)} slot(s) marked as deviations",
+                detail="Each slot now names one of the target's own filament presets, so any value it "
+                "differs on -- bed and nozzle temperatures, flow ratio, max volumetric speed -- has to "
+                "be declared or the slicer serves the preset's value instead.",
+                items=slots_with,
+            )
     else:
         result.note(
             "process",

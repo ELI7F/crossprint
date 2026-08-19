@@ -44,6 +44,15 @@ def _process_vocabulary(vendor_dir: Path) -> set[str]:
     return vocab
 
 
+def _filament_vocabulary(vendor_dir: Path) -> set[str]:
+    """Every key any of this vendor's filament presets defines."""
+    lib = PresetLibrary(vendor_dir)
+    vocab: set[str] = set()
+    for name in lib.names("filament"):
+        vocab |= set(flatten("filament", lib.get("filament", name), lib))
+    return vocab
+
+
 def test_structure_is_one_print_n_filament_one_printer():
     """Layout confirmed identical across real U1, H2C and H2D project files."""
     entries = compute_different_settings_to_system(
@@ -125,9 +134,20 @@ def test_no_converted_file_ever_names_a_key_the_target_cannot_resolve(source_nam
     assert named, f"{source_name}->{target} marked nothing at all"
     assert set(named) <= vocab, (source_name, target, sorted(set(named) - vocab))
 
-    # Filament and printer sections stay empty -- there's no target preset to
-    # diff them against, and the source's entries name foreign settings.
-    assert entries[1:] == [""] * (len(config["filament_colour"]) + 1)
+    # The filament sections are now populated too, and the same invariant has
+    # to hold for them: every key named must be one the target's own filament
+    # presets define. Naming a foreign key here is the identical bug, one
+    # scope down.
+    filament_vocab = _filament_vocabulary(vendor_dir)
+    for slot, section in enumerate(entries[1:-1]):
+        slot_named = [k for k in section.split(";") if k]
+        assert set(slot_named) <= filament_vocab, (
+            source_name, target, slot, sorted(set(slot_named) - filament_vocab)
+        )
+
+    # The printer section stays empty: conversion rebuilds machine config
+    # wholesale from the target's preset, so nothing in it is a user deviation.
+    assert entries[-1] == ""
 
 
 def test_real_conversion_marks_the_settings_that_differ_from_target_default():
@@ -237,3 +257,76 @@ def test_declared_keys_stay_inside_the_target_vocabulary():
         for section in config["different_settings_to_system"]:
             for key in filter(None, section.split(";")):
                 assert key in vocabulary, f"{source}->{target} declares {key!r}, which {target} doesn't define"
+
+
+# -- filament sections ----------------------------------------------------
+#
+# These were left empty for a long time on the reasoning that a converted
+# project keeps its source filament preset names, so there is nothing in the
+# target's library to diff against. filament_mapping.py made that false, and
+# nobody revisited it: a 14-colour P1S project converted to U1 had every slot
+# differing from the preset it named -- bed temp 55 against 65, max volumetric
+# speed 18 against 15 -- and declared none of it, so Snapmaker Orca served its
+# own values for all fourteen.
+
+
+def test_filament_slot_names_a_key_it_actually_differs_on():
+    from convert.settings_diff import diff_filament_slot
+
+    config = {"hot_plate_temp": ["55", "65"], "nozzle_temperature": ["220", "220"]}
+    preset = {"hot_plate_temp": ["65"], "nozzle_temperature": ["220"]}
+
+    assert diff_filament_slot(config, preset, 0, 2) == ["hot_plate_temp"]
+    assert diff_filament_slot(config, preset, 1, 2) == []
+
+
+def test_filament_slot_never_names_a_key_outside_the_target_preset():
+    """The invariant this whole module exists to protect, at filament scope."""
+    from convert.settings_diff import diff_filament_slot
+
+    config = {"snapmaker_only_key": ["1"], "hot_plate_temp": ["55"]}
+    preset = {"hot_plate_temp": ["65"]}
+
+    assert diff_filament_slot(config, preset, 0, 1) == ["hot_plate_temp"]
+
+
+def test_filament_slot_skips_per_variant_arrays():
+    """A dual-hotend target stores per-filament settings once per extruder
+    variant, so index `slot` is a different filament's value entirely.
+    Comparing it would assert a deviation that isn't one."""
+    from convert.settings_diff import diff_filament_slot
+
+    # 2 filaments x 2 variants -- four entries, not two.
+    config = {"nozzle_temperature": ["220", "230", "220", "230"]}
+    preset = {"nozzle_temperature": ["220"]}
+
+    assert diff_filament_slot(config, preset, 0, 2) == []
+
+
+def test_filament_slot_skips_multi_valued_preset_entries():
+    from convert.settings_diff import diff_filament_slot
+
+    config = {"some_vector": ["1", "2"]}
+    preset = {"some_vector": ["1", "9", "9"]}
+
+    assert diff_filament_slot(config, preset, 0, 2) == []
+
+
+def test_field_keeps_its_length_when_filament_profiles_are_given():
+    """The list length is part of the format the slicer parses: one print
+    section, one per filament, one printer section."""
+    config = {"hot_plate_temp": ["55", "55", "55"]}
+    profiles = [{"hot_plate_temp": ["65"]}, None, {"hot_plate_temp": ["55"]}]
+
+    field = compute_different_settings_to_system(config, {}, 3, profiles)
+
+    assert len(field) == 5
+    assert field[1] == "hot_plate_temp"  # differs
+    assert field[2] == ""                # preset unresolved
+    assert field[3] == ""                # matches
+    assert field[-1] == ""               # printer section always empty
+
+
+def test_omitting_filament_profiles_keeps_the_old_empty_behaviour():
+    field = compute_different_settings_to_system({"hot_plate_temp": ["55"]}, {}, 1)
+    assert field == ["", "", ""]

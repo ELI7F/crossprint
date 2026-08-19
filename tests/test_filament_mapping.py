@@ -134,3 +134,33 @@ def test_catalogue_ids_move_with_the_preset_names():
         expected = flatten("filament", library.get("filament", name), library).get("filament_id")
         assert catalogue_id == expected, f"{name} should carry {expected!r}, carries {catalogue_id!r}"
         assert catalogue_id, f"{name} resolved to a blank catalogue id"
+
+
+# -- nozzle fit -----------------------------------------------------------
+
+
+def test_does_not_pick_a_preset_published_for_another_nozzle():
+    """A 0.4 mm project's PLA-CF slots were mapped to "Generic PLA-CF @U1 0.6
+    nozzle" while "Snapmaker PLA-CF @U1 0.4 nozzle" sat unused in the same
+    library: neither name carries a preferred variant word, so the tie fell
+    through to "shortest name" and the 0.6 preset's name is shorter."""
+    result = map_filaments_to_target(["PLA-CF"], SNAPMAKER, "@U1", None, nozzle="0.4")
+
+    chosen = result.filament_settings_id[0]
+    assert "0.6 nozzle" not in chosen and "0.8 nozzle" not in chosen, chosen
+
+
+def test_an_unqualified_preset_still_wins_over_a_nozzle_specific_one():
+    """Deliberate: the unqualified presets are the ones verified against real
+    project files, so nozzle ranking only breaks ties among qualified names."""
+    result = map_filaments_to_target(["PLA"], SNAPMAKER, "@U1", None, nozzle="0.4")
+
+    assert "nozzle" not in result.filament_settings_id[0]
+
+
+def test_nozzle_rank_orders_unqualified_then_matching_then_other():
+    from convert.filament_mapping import _nozzle_rank
+
+    assert _nozzle_rank("Snapmaker PLA Basic @U1", "0.4") == 0
+    assert _nozzle_rank("Snapmaker PLA-CF @U1 0.4 nozzle", "0.4") == 1
+    assert _nozzle_rank("Generic PLA-CF @U1 0.6 nozzle", "0.4") == 2
