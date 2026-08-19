@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from core.archive import ThreeMFArchive
 from core.preset_resolver import PresetLibrary, diff_against_base, flatten
 
@@ -79,3 +81,48 @@ def test_missing_inherits_parent_is_tolerated_not_fatal():
     lib = PresetLibrary(PROFILES / "snapmaker_u1")
     orphan = {"name": "test", "inherits": "Definitely Not A Real Preset Name", "foo": "bar"}
     assert flatten("process", orphan, lib) == dict(orphan)
+
+
+# -- duplicate preset names ------------------------------------------------
+
+
+def test_vendored_libraries_have_no_duplicate_preset_names():
+    """The guard, applied to the libraries actually shipped.
+
+    profiles/snapmaker_u1/process/ carried a stale `..._old.json` and 19
+    `... copy.json` files, all declaring names that already existed. The index
+    let the last file win, and "last" is the filesystem's directory order --
+    so the same project converted on Windows and on the Linux host produced
+    different output, silently.
+    """
+    from convert.pipeline import _vendor_dir
+
+    for slug in ("u1", "h2c"):
+        PresetLibrary(_vendor_dir(slug))  # raises DuplicatePresetError if any collide
+
+
+def test_duplicate_names_raise_rather_than_letting_one_win(tmp_path):
+    from core.preset_resolver import DuplicatePresetError
+
+    process = tmp_path / "process"
+    process.mkdir()
+    (process / "a.json").write_text(json.dumps({"name": "Same Name", "layer_height": "0.2"}), encoding="utf-8")
+    (process / "b.json").write_text(json.dumps({"name": "Same Name", "layer_height": "0.3"}), encoding="utf-8")
+
+    with pytest.raises(DuplicatePresetError) as exc:
+        PresetLibrary(tmp_path)
+
+    assert "Same Name" in str(exc.value)
+    assert "a.json" in str(exc.value) and "b.json" in str(exc.value)
+
+
+def test_a_library_without_collisions_still_loads(tmp_path):
+    process = tmp_path / "process"
+    process.mkdir()
+    (process / "a.json").write_text(json.dumps({"name": "One", "layer_height": "0.2"}), encoding="utf-8")
+    (process / "b.json").write_text(json.dumps({"name": "Two", "layer_height": "0.3"}), encoding="utf-8")
+
+    library = PresetLibrary(tmp_path)
+
+    assert library.get("process", "One")["layer_height"] == "0.2"
+    assert library.get("process", "Two")["layer_height"] == "0.3"

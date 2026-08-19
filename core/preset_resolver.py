@@ -36,6 +36,36 @@ PRESET_META_KEYS = {
 }
 
 
+class DuplicatePresetError(ValueError):
+    """Two files in one namespace declare the same preset name.
+
+    This was not hypothetical. `profiles/snapmaker_u1/process/` carried a
+    `0.20 Standard @Snapmaker U1 (0.4 nozzle)_old.json` alongside the real one,
+    both declaring that name and differing in 17 settings, plus 19 ` copy.json`
+    duplicates. The index simply let the last file win -- and "last" is decided
+    by the filesystem's directory order, which differs between Windows and
+    Linux. The same project converted on a developer's machine and on the
+    hosted instance produced *different output*, with nothing anywhere saying
+    so: locally the stale preset won and the converted file declared
+    `support_type` as a deviation while omitting `wipe_speed`; on the server
+    the real preset won and it was the other way round.
+
+    Failing loudly is the whole point. A vendored library with two presets of
+    the same name has no correct answer, and picking one silently is how that
+    stayed invisible.
+    """
+
+    def __init__(self, preset_type: str, name: str, first: Path, second: Path) -> None:
+        super().__init__(
+            f"two {preset_type} presets both named {name!r}: {first.name} and {second.name}. "
+            "Which one wins would depend on the filesystem's directory order, so conversion "
+            "would differ between machines. Remove the stale or duplicate file."
+        )
+        self.preset_type = preset_type
+        self.name = name
+        self.files = (first, second)
+
+
 @dataclass
 class PresetLibrary:
     """In-memory index of one vendor's system preset directory
@@ -49,11 +79,18 @@ class PresetLibrary:
             type_dir = self.vendor_dir / preset_type
             if not type_dir.is_dir():
                 continue
-            for f in type_dir.glob("*.json"):
+            source_of: dict[str, Path] = {}
+            # Sorted so the traversal order is the same on every filesystem.
+            # The guard below makes order irrelevant to the *result*; this just
+            # means a failure reproduces identically wherever it is seen.
+            for f in sorted(type_dir.glob("*.json")):
                 data = json.loads(f.read_text(encoding="utf-8"))
                 name = data.get("name")
                 if not name:
                     continue
+                if name in source_of:
+                    raise DuplicatePresetError(preset_type, name, source_of[name], f)
+                source_of[name] = f
                 self._by_type_name[(preset_type, name)] = data
 
     def get(self, preset_type: PresetType, name: str) -> dict | None:

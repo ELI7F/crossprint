@@ -346,3 +346,38 @@ while `Snapmaker PLA-CF @U1 0.4 nozzle` sat unused. Neither name carries a
 preferred-variant word, so the tie fell through to "shortest name" -- and the
 wrong-nozzle preset's name is three characters shorter. Tie-breakers chosen for
 cosmetics decide real questions once the meaningful keys tie.
+
+## The same code is not the same converter (2026-08-19)
+
+The commit hash in `/healthz` answers "which code is running". It says nothing
+about which *data* that code read, and this tool is mostly data: the vendored
+preset libraries decide almost every value in the output.
+
+`profiles/snapmaker_u1/process/` carried a
+`0.20 Standard @Snapmaker U1 (0.4 nozzle)_old.json` beside the real one. Both
+declared that name in their `name` field, and they differed in 17 settings.
+`PresetLibrary` indexes by that name and let the last file win -- and "last" is
+whatever order the filesystem hands back from `glob`, which is not the same on
+Windows and Linux.
+
+So the same project, converted with the same commit, produced different files
+on a developer's machine and on the hosted instance. Locally the stale preset
+won: the output declared `support_type` as a deviation and omitted
+`wipe_speed`. On the server the real preset won and it was the reverse. Nothing
+anywhere reported a problem. Nineteen more ` copy.json` files sat in the same
+directory; those happened to be byte-identical to their originals, so they had
+no effect and equally no warning.
+
+Found only by converting a real file **through the live site** and diffing the
+result against the same conversion run locally -- not by reading the health
+check, which was green and correct and useless for this.
+
+Two habits follow:
+
+- **When a fix is deployed, compare outputs, not versions.** Convert the same
+  file both ways and diff the config. A matching commit hash and a differing
+  output is a state this repo has actually been in.
+- **Ambiguity in vendored data is a bug even when it is currently harmless.**
+  `PresetLibrary` now raises `DuplicatePresetError` rather than picking one,
+  and a test asserts both shipped libraries are collision-free, because the
+  next person to re-vendor a profile directory will not think to check.
