@@ -314,9 +314,13 @@ def test_no_setting_still_names_the_source_machine():
     `bed_custom_model` was the visible one: a Bambu project carries an absolute
     path into Bambu Studio's install, and Snapmaker Orca happily loaded it and
     drew Bambu's X1 bed as a black slab sitting on the U1's plate. The user saw
-    it before this suite did. `print_compatible_printers`, `inherits_group` and
-    the two `default_*_profile` keys are the same class -- references into a
-    library the target doesn't have.
+    it before this suite did. `inherits_group` is the same class -- a reference
+    into a library the target doesn't have.
+
+    `print_compatible_printers` and the two `default_*_profile` keys are that
+    class too, but only in the source's spelling of them: they must not name
+    the *source* machine, and they must name the *target* one, which
+    `test_the_print_config_declares_itself_compatible_with_the_target` covers.
     """
     import re
 
@@ -340,3 +344,29 @@ def test_no_setting_still_names_the_source_machine():
             if hit:
                 offenders[key] = hit[:2]
         assert offenders == {}, f"{source}->{target} still names the source machine: {offenders}"
+
+
+def test_the_print_config_declares_itself_compatible_with_the_target():
+    """A print config listing no compatible printer is not applicable to the
+    printer the project selects, so the slicer falls back to its default
+    profile -- and every setting the user tuned disappears from the UI while
+    sitting correctly in the file, correctly declared as a deviation.
+
+    A real U1 project written by Snapmaker Orca carries
+    `['Snapmaker U1 (0.4 nozzle)']`. The target's process preset does not
+    define the key, so conversion has to state it.
+    """
+    for source, target, expected in (
+        ("bambu_da_boss", "u1", "Snapmaker U1 (0.4 nozzle)"),
+        ("u1_toucan_plus", "h2c", "Bambu Lab H2C 0.4 nozzle"),
+    ):
+        archive, _ = convert(sample_path(source), target)
+        try:
+            config = json.loads(archive.get_text("Metadata/project_settings.config"))
+        finally:
+            archive.close()
+
+        assert config.get("print_compatible_printers") == [expected], (
+            source, target, config.get("print_compatible_printers")
+        )
+        assert config.get("default_print_profile"), f"{source}->{target} has no default_print_profile"

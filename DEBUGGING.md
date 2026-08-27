@@ -381,3 +381,43 @@ Two habits follow:
   `PresetLibrary` now raises `DuplicatePresetError` rather than picking one,
   and a test asserts both shipped libraries are collision-free, because the
   next person to re-vendor a profile directory will not think to check.
+
+## A print config that names no compatible printer is discarded whole (2026-08-27)
+
+The report was "it converts but without the settings". Everything checked out:
+the values were in `project_settings.config`, correct; they were named in
+`different_settings_to_system`, correctly; the vocabulary filter was dropping
+nothing the target defines; an exhaustive comparison of all 108 print settings
+the source set and U1 defines found only 4 differing, all deliberate
+translations. And Snapmaker Orca still showed its own preset values for every
+one of them, with the preset name displaying no "modified" marker at all.
+
+`print_compatible_printers` was missing. `core/slicer_owned.py` strips it
+because the source's copy names Bambu printers -- a reference into a library
+the target does not have, correctly removed -- and nothing ever wrote the
+target's value back. The target's *process* preset does not define the key, so
+there was no fallback: the field simply was not there.
+
+A real U1 project written by Orca carries
+`['Snapmaker U1 (0.4 nozzle)']`. Without it, the print config declares itself
+applicable to no printer, so the slicer sets it aside and loads its default
+profile. Every deviation is then irrelevant, because the config they deviate
+from is not the one in use.
+
+**The failure mode to recognise: everything you can check inside the file is
+correct, and the slicer ignores all of it.** That shape means the file is being
+rejected at a level above the values -- an applicability or identity check --
+not mis-set at the value level. Checking harder at the value level, which is
+what the first two rounds of this did, cannot find it.
+
+Two method notes from the same night:
+
+- **Stripping a field and setting it are different operations.** Every entry in
+  `_SOURCE_MACHINE_REFERENCES` needs an answer to "and what should the target's
+  value be?" -- for three of them the answer was not "absent".
+- **The slicer's own CLI could not adjudicate this.** `snapmaker-orca.exe`
+  rejects any project whose `Application` metadata names a version above its
+  own, and then segfaults in `PartPlate::calc_exclude_triangles` once past that
+  -- on a real Orca-written U1 file as readily as on ours. Both facts were only
+  established by running the same commands against a known-good control. The
+  GUI, driven directly, answered in one screenshot.

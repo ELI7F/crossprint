@@ -430,7 +430,7 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
     # per-extruder vector where the source has one number. Keeping them (and
     # marking them as deliberate overrides below) produced a project that
     # loaded its config but showed no geometry. See core/shapes.py.
-    new_config, shape_dropped, shape_reshaped = harmonize_shapes(
+    new_config, shape_dropped, shape_reshaped, shape_collapsed = harmonize_shapes(
         new_config,
         target_defaults={**flat_target_print, **flat_target_machine},
         keep=load_variant_options(_vendor_dir(target)) | _FILAMENT_SIZED_KEYS,
@@ -445,6 +445,19 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
             items=sorted(shape_reshaped),
             warning=f"rewrote {len(shape_reshaped)} setting(s) into the shape {MODEL_REGISTRY[target]} stores "
             f"them in (e.g. {', '.join(shape_reshaped[:3])}); the values themselves are unchanged.",
+        )
+    if shape_collapsed:
+        result.note(
+            "settings",
+            f"Took the primary extruder's value for {len(shape_collapsed)} per-extruder setting(s)",
+            detail=f"{MODEL_REGISTRY[target]} stores each of these as one value while the source stores "
+            "one per nozzle variant, and the variants disagree. The first entry is the first extruder's "
+            "standard nozzle -- the configuration the project actually prints with -- so that value is "
+            "used and the other variants' are discarded.",
+            items=sorted(shape_collapsed),
+            warning=f"kept the primary extruder's value for {len(shape_collapsed)} per-extruder setting(s) "
+            f"that {MODEL_REGISTRY[target]} stores as a single value "
+            f"(e.g. {', '.join(shape_collapsed[:3])}); other nozzle variants' values were discarded.",
         )
     if shape_dropped:
         result.note(
@@ -464,6 +477,22 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
     # guessing them is what produced "Invalid configuration file" -- see
     # core/slicer_owned.py.
     new_config, slicer_keys = strip_slicer_owned(new_config, load_variant_options(_vendor_dir(target)))
+
+    # Three of those are stripped because they name the *source* machine, and
+    # then have to be re-stated for the target rather than left absent.
+    #
+    # `print_compatible_printers` is the one that matters. A real U1 project
+    # written by Snapmaker Orca carries `['Snapmaker U1 (0.4 nozzle)']`; the
+    # target's process preset does not define it, so nothing fills the gap if
+    # conversion leaves it out. A print config that lists no compatible printer
+    # is not applicable to the printer the project selects, and the slicer
+    # falls back to its default profile -- which presents exactly as "none of
+    # my settings came across", with the values sitting correctly in the file
+    # and correctly declared as deviations the whole time.
+    new_config["print_compatible_printers"] = [target_preset_name]
+    for key in ("default_print_profile", "default_filament_profile"):
+        if key in flat_target_machine:
+            new_config[key] = flat_target_machine[key]
     if slicer_keys:
         result.note(
             "settings",

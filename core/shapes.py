@@ -57,20 +57,39 @@ def _shape_of(value) -> tuple[str, int]:
     return ("list", len(value)) if isinstance(value, list) else ("scalar", 1)
 
 
-def _reshape(value, target_value):
-    """`value` in the target's shape, or None when that would lose meaning."""
+def _reshape(value, target_value, allow_primary: bool = False):
+    """`value` in the target's shape, and whether the primary entry was taken.
+
+    Returns `(converted, took_primary)`, with `converted` None when the
+    reshape would lose meaning.
+
+    A source vector whose entries disagree used to be discarded outright,
+    which handed the target's stock preset value to the user instead of
+    theirs. But those entries are not alternatives of equal standing: a Bambu
+    project stores a speed once per *nozzle variant*, and index 0 is the first
+    extruder's standard nozzle -- the configuration a 0.4 mm project is
+    actually printing with. `outer_wall_speed` on a real H2D file reads
+    `['200', '500', '200', '500', '500']`, where 200 is the value the user set
+    and 500 belongs to a High Flow nozzle that isn't installed.
+
+    So `allow_primary` collapses to index 0 rather than dropping. The caller
+    reports it separately, because unlike an all-equal unwrap this one does
+    discard the other entries.
+    """
     if isinstance(value, list) and not isinstance(target_value, list):
         if not value:
-            return None
+            return None, False
         # Every entry the same means the list was only ever a wrapper.
-        return value[0] if all(item == value[0] for item in value) else None
+        if all(item == value[0] for item in value):
+            return value[0], False
+        return (value[0], True) if allow_primary else (None, False)
 
     if not isinstance(value, list) and isinstance(target_value, list):
         if not target_value:
-            return None
-        return [value] * len(target_value)
+            return None, False
+        return [value] * len(target_value), False
 
-    return None
+    return None, False
 
 
 def harmonize_shapes(
@@ -92,11 +111,13 @@ def harmonize_shapes(
     Growing a scalar into a vector still needs a preset, since only the preset
     says how many entries the target expects.
 
-    Returns the config, the keys dropped, and the keys reshaped.
+    Returns the config, the keys dropped, the keys reshaped without loss, and
+    the keys collapsed to the primary extruder's value.
     """
     harmonized = dict(config)
     dropped: list[str] = []
     reshaped: list[str] = []
+    collapsed: list[str] = []
 
     for key, target_value in target_defaults.items():
         if key not in harmonized or key in keep:
@@ -107,13 +128,16 @@ def harmonize_shapes(
         if _shape_of(mine)[0] == _shape_of(theirs)[0]:
             continue
 
-        converted = _reshape(mine, theirs)
+        # allow_primary: the target's preset confirms this is a per-extruder
+        # vector collapsing to a scalar, which is the one case where index 0
+        # is known to be the configuration in use.
+        converted, took_primary = _reshape(mine, theirs, allow_primary=True)
         if converted is None:
             del harmonized[key]
             dropped.append(key)
         else:
             harmonized[key] = converted
-            reshaped.append(key)
+            (collapsed if took_primary else reshaped).append(key)
 
     for key, option_type in (target_types or {}).items():
         if key not in harmonized or key in keep or key in target_defaults:
@@ -121,10 +145,12 @@ def harmonize_shapes(
         value = harmonized[key]
         if not isinstance(value, list) or _declared_is_vector(option_type) is not False:
             continue
-        # Declared scalar, holding a list: unwrap when that loses nothing.
-        converted = _reshape(value, "")
+        # Declared scalar, holding a list: unwrap only when that loses nothing.
+        # No preset backs this path, so there is nothing confirming the list is
+        # per-extruder, and index 0 would be a guess rather than a reading.
+        converted, _ = _reshape(value, "")
         if converted is not None:
             harmonized[key] = converted
             reshaped.append(key)
 
-    return harmonized, sorted(dropped), sorted(set(reshaped))
+    return harmonized, sorted(dropped), sorted(set(reshaped)), sorted(set(collapsed))
