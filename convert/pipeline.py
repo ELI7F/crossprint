@@ -18,6 +18,7 @@ from typing import Iterable
 
 from convert.color_mapping import map_colors_to_bambu, map_colors_to_u1, remap_object_extruders
 from convert.filament_mapping import map_filaments_to_target
+from convert.filament_slots import normalize_filament_slots
 from convert.filament_variants import expand_per_variant_options
 from convert.layer_heights import clamp_layer_height_profile
 from convert.paint_transfer import remap_paint_colors
@@ -214,14 +215,28 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
         raise LookupError(f"{target_preset_name!r} not found in {_vendor_dir(target)}")
     flat_target_machine = flatten("machine", target_machine, target_library)
 
+    # Real files do not always agree with themselves about how many filaments
+    # they have, and every count downstream is derived from this one -- see
+    # convert/filament_slots.py for the two projects that made it necessary.
+    slots = normalize_filament_slots(
+        colour=project.filament_colour,
+        type_=project.filament_type,
+        settings_id=project.filament_settings_id,
+        extra_lengths={
+            key: len(value)
+            for key in ("filament_ids", "filament_map")
+            if isinstance(value := project.get(key), list)
+        },
+    )
+
     if target == "u1":
-        mapping = map_colors_to_u1(project.filament_colour, project.filament_type, project.filament_settings_id)
+        mapping = map_colors_to_u1(slots.colour, slots.type, slots.settings_id)
     else:
         mapping = map_colors_to_bambu(
             MODEL_REGISTRY[target],
-            project.filament_colour,
-            project.filament_type,
-            project.filament_settings_id,
+            slots.colour,
+            slots.type,
+            slots.settings_id,
             target_library,
             target_preset_name,
         )
@@ -231,6 +246,8 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
         target_vendor=target,
         filament_count=len(mapping.filament_colour),
     )
+    for warning in slots.warnings:
+        result.note("filaments", warning, warning=warning)
     for warning in mapping.warnings:
         result.note("colors", warning, warning=warning)
 
@@ -323,6 +340,14 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
         # for a different nozzle is what this prevents.
         nozzle=str(new_config.get("printer_variant") or "0.4"),
     )
+    # These two pass through from the source and are normally identical to
+    # what came in. Writing them explicitly matters only when the source's
+    # filament arrays disagreed and normalize_filament_slots padded them --
+    # otherwise the padding would never reach the output and the project would
+    # keep declaring fewer colours than it has filaments.
+    new_config["filament_colour"] = mapping.filament_colour
+    new_config["filament_type"] = mapping.filament_type
+
     new_config["filament_settings_id"] = filament_mapping.filament_settings_id
     # The catalogue codes must move with the names. Rewriting one and not the
     # other leaves the project claiming a Bambu preset while still carrying the
