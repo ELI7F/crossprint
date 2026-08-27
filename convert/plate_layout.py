@@ -152,7 +152,16 @@ def relayout_for_target_bed(
     return result
 
 
+# Deliberately phrased as a heads-up, not a finding. This fires whenever the
+# target bed is smaller in either dimension, which on a real library is about a
+# quarter of all conversions -- and it says nothing about whether any object
+# actually overflows, because that would mean reading every vertex of every
+# mesh. On a 1 GB project that is the whole point of streaming, given up to
+# qualify a sentence. A user who reads "anything that no longer fits" as
+# "something does not fit" goes looking for a problem that usually is not
+# there, so the wording has to carry the uncertainty itself.
 MODEL_BED_SHRINK_HINT = (
-    "the target bed is smaller ({tw:.0f}x{td:.0f} mm vs {sw:.0f}x{sd:.0f} mm) -- objects were "
-    "re-centred on it, but anything that no longer fits will need rearranging in the slicer."
+    "the target bed is smaller ({tw:.0f}x{td:.0f} mm vs {sw:.0f}x{sd:.0f} mm), so objects were "
+    "re-centred on it. Nothing was measured as overflowing -- this is a heads-up to glance at the "
+    "plate, not a problem that was detected."
 )
