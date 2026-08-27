@@ -84,7 +84,7 @@ neither costs a second conversion or parks a result on the server.
 .venv/Scripts/python -m pytest
 ```
 
-207 tests, most run against real `.3mf` files rather than synthetic fixtures —
+237 tests, most run against real `.3mf` files rather than synthetic fixtures —
 `tests/conftest.py` points at the user's own Downloads folder and skips
 gracefully if a given sample isn't present.
 
