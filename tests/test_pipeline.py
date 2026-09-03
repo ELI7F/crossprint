@@ -370,3 +370,46 @@ def test_the_print_config_declares_itself_compatible_with_the_target():
             source, target, config.get("print_compatible_printers")
         )
         assert config.get("default_print_profile"), f"{source}->{target} has no default_print_profile"
+
+
+def test_the_config_never_claims_a_version_newer_than_the_target():
+    """Reported as "it converts but arrives without any settings, only colours".
+
+    `version` is the config-format version, and a converted project inherited
+    the *source* slicer's. A current Bambu Studio writes 02.05.00.66;
+    Snapmaker Orca is built on OrcaSlicer 1.10.1.50 and discards a config
+    claiming to be newer than itself. Geometry and paint still load, so the
+    models and their colours appear while every setting silently falls back to
+    the target's default -- with the project's own values sitting in the file,
+    correctly declared as deviations, ignored wholesale.
+
+    Verified in Snapmaker Orca by changing this one field on an otherwise
+    identical file: the preset went from unmarked to "* 0.20 Standard
+    @Snapmaker U1" and first layer height from the preset's 0.25 to the
+    project's 0.2.
+    """
+    for source in ("bambu_da_boss", "a1mini_woody"):
+        archive, _ = convert(sample_path(source), "u1")
+        try:
+            config = json.loads(archive.get_text("Metadata/project_settings.config"))
+        finally:
+            archive.close()
+
+        # The version of the preset library the config was actually built from.
+        assert config["version"] == "2.2.0.4", (source, config.get("version"))
+
+
+def test_a_bambu_target_keeps_the_sources_version():
+    """Bambu's vendored presets declare no version, so there is nothing
+    truthful to replace it with -- and this is the path already verified in
+    Bambu Studio, so it must not change."""
+    archive, _ = convert(sample_path("u1_toucan_plus"), "h2c")
+    try:
+        config = json.loads(archive.get_text("Metadata/project_settings.config"))
+    finally:
+        archive.close()
+
+    with ThreeMFArchive.open(sample_path("u1_toucan_plus")) as source:
+        original = json.loads(source.get_text("Metadata/project_settings.config"))
+
+    assert config["version"] == original["version"]

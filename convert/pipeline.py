@@ -514,6 +514,33 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
     # falls back to its default profile -- which presents exactly as "none of
     # my settings came across", with the values sitting correctly in the file
     # and correctly declared as deviations the whole time.
+    # `version` is the config-format version, and a converted project inherits
+    # the *source* slicer's. That is not cosmetic: the target refuses to apply
+    # a config claiming to come from a version newer than itself.
+    #
+    # This is the failure it fixes, and it was reported as "it converts but
+    # arrives without any settings, only colours". A current Bambu Studio
+    # writes 02.05.00.66; Snapmaker Orca is built on OrcaSlicer 1.10.1.50 and
+    # discards the whole config as too new. Geometry and paint still load, so
+    # the models and their colours appear and every setting is the target's
+    # default -- with the file's values sitting in it, correctly declared as
+    # deviations, being ignored wholesale.
+    #
+    # Proven by changing this one field on an otherwise identical file: the
+    # preset went from unmarked to "* 0.20 Standard @Snapmaker U1", and first
+    # layer height from the preset's 0.25 to the project's 0.2. The `version`
+    # in the config is enough on its own -- the authoring-application string in
+    # 3dmodel.model can stay as it is, which matters because that part is the
+    # geometry and reaches 137 MB on a real U1 project.
+    #
+    # The honest value is the version of the preset library this config was
+    # built from: everything in it comes from those presets. Bambu's vendored
+    # presets declare none, so a Bambu target keeps what the source had --
+    # which is what the verified U1-to-Bambu path already does.
+    target_library_version = flat_target_machine.get("version")
+    if target_library_version:
+        new_config["version"] = target_library_version
+
     new_config["print_compatible_printers"] = [target_preset_name]
     for key in ("default_print_profile", "default_filament_profile"):
         if key in flat_target_machine:
