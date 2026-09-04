@@ -244,9 +244,9 @@ function showDone(name, result) {
   statusArea.innerHTML = `
     <div class="card">
       <div class="banner banner-ok" style="margin-top:0">Converted. Review the changes below, then
-        download and <strong>re-slice</strong> in the target's slicer. Open it in a slicer that
-        isn't already running — dropping a project into an open window can keep that session's
-        settings instead of the project's.</div>
+        download and <strong>re-slice</strong> in the target's slicer. Open it with
+        <strong>File → Open Project</strong>, not File → Import — importing takes the geometry only
+        and leaves every setting at whatever profile is already loaded.</div>
       <button class="btn-primary" id="downloadBtn" type="button">Download ${esc(name)}</button>
     </div>
     ${warned}

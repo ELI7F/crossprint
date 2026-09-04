@@ -133,13 +133,20 @@ python cli.py models</code></pre>
     <details>
       <summary>The converted file opens but all my print settings are back to defaults.</summary>
       <div class="answer">
-        <p><strong>Check this first: open the file in a slicer that isn't already running.</strong>
-           Close the slicer completely, then open the converted project. Dropping a project into an
-           already-open window can load the models while keeping the settings of the session you were
-           already in — the geometry and colours arrive, every setting stays at the current profile's
-           value, and it looks exactly as though conversion dropped them. It didn't; they are in the
-           file. This is the single most common cause, and it was reported as happening on "almost
-           every file" before the cause was found.</p>
+        <p><strong>Check this first: open it as a project, not as an import.</strong> A slicer has two
+           different ways to take a <code>.3mf</code>, and only one of them reads the settings:</p>
+        <ul>
+          <li><strong>File → Open Project</strong> loads the models <em>and</em> the config. This is
+              also what happens when you double-click the file in your file manager.</li>
+          <li><strong>File → Import</strong> — and usually drag-and-drop — takes the geometry only.
+              Your models and their colours arrive, every setting stays at whatever profile is
+              currently loaded, and it looks exactly as though conversion dropped them. It didn't;
+              they are in the file.</li>
+        </ul>
+        <p>If an import asks what to bring in, choose <em>Import model and profile</em> rather than
+           <em>Import model only</em> or <em>Import geometry only</em>. This is the single most common
+           cause of the settings appearing to be missing — it was reported as happening on "almost
+           every file", with the same file loading perfectly when opened as a project.</p>
         <p>You can tell which it is at a glance: when a project's settings really are loaded, the
            process profile is marked as modified (Snapmaker Orca and Bambu Studio both prefix it with
            <code>*</code>) and every setting that differs from the stock profile is highlighted with a
