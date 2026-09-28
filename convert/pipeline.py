@@ -16,13 +16,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
-from convert.color_mapping import map_colors_to_bambu, map_colors_to_u1, remap_object_extruders
+from convert.color_mapping import hotend_class, map_colors_to_bambu, map_colors_to_u1, remap_object_extruders
 from convert.filament_mapping import map_filaments_to_target
 from convert.filament_slots import normalize_filament_slots
 from convert.filament_variants import expand_per_variant_options
 from convert.layer_heights import clamp_layer_height_profile
 from convert.paint_transfer import remap_paint_colors
 from convert.plate_layout import bed_size, relayout_for_target_bed
+from convert.purge_matrix import reshape_purge_matrix
 from convert.report import ChangeReport
 from convert.settings_diff import compute_different_settings_to_system
 from core.archive import PathOrStream, ThreeMFArchive
@@ -541,6 +542,32 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
     if target_library_version:
         new_config["version"] = target_library_version
 
+    # Purge volumes are stored per filament *pair*, so their size follows the
+    # hotend class and they cannot simply be carried across one. Dropping them
+    # with the rest of the machine layer assumed the slicer would supply its
+    # own; it does not. Bambu Studio reports "Purge volumes matrix do not match
+    # to the correct size!" and sets partial purging to zero, which means
+    # colour bleeding into the model on every tool change.
+    purge = reshape_purge_matrix(
+        matrix=project.get("flush_volumes_matrix"),
+        vector=project.get("flush_volumes_vector"),
+        filament_count=result.filament_count,
+        target_is_dual_hotend=target != "u1" and hotend_class(target_machine) == "vortek",
+    )
+    if purge.matrix:
+        new_config["flush_volumes_matrix"] = purge.matrix
+        if purge.vector:
+            new_config["flush_volumes_vector"] = purge.vector
+        result.report.add(
+            "colors",
+            f"Rebuilt the purge volume matrix for {MODEL_REGISTRY[target]}",
+            detail="Purge volumes are stored per filament pair, so the matrix is sized by the target's "
+            "hotend count -- one block per filament pair on a single hotend, two on a dual. Your own "
+            "volumes are reshaped rather than replaced, since they were computed from your colours.",
+        )
+    for warning in purge.warnings:
+        result.note("colors", warning, warning=warning)
+
     new_config["print_compatible_printers"] = [target_preset_name]
     for key in ("default_print_profile", "default_filament_profile"):
         if key in flat_target_machine:
@@ -549,12 +576,13 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
         result.note(
             "settings",
             f"Left {len(slicer_keys)} machine setting(s) for the slicer to fill in",
-            detail="Nozzle variants, per-extruder kinematics, AMS routing and purge matrices can't be "
-            "synthesised statically -- their widths depend on the installed slicer version. Omitting "
-            "them and letting the slicer supply them is what makes the file load.",
+            detail="Nozzle variants, per-extruder kinematics and AMS routing can't be synthesised "
+            "statically -- their widths depend on the installed slicer version. Omitting them and "
+            "letting the slicer supply them is what makes the file load. Purge volumes used to be "
+            "left here too; they are not, because the slicer does not in fact supply them.",
             items=sorted(slicer_keys),
             warning=f"left {len(slicer_keys)} machine setting(s) for {MODEL_REGISTRY[target]}'s slicer to fill in "
-            "from its own presets (nozzle variants, per-extruder kinematics, purge volumes).",
+            "from its own presets (nozzle variants, per-extruder kinematics, AMS routing).",
         )
 
     # The project now names the target's stock print preset while carrying the
