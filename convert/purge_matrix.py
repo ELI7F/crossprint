@@ -117,6 +117,42 @@ def reshape_purge_matrix(
     return PurgeMatrixResult(matrix=[_fmt(v) for v in out], vector=out_vector)
 
 
+#: Every real Bambu project carries 1. None carries 0.
+_DEFAULT_FLUSH_MULTIPLIER = "1"
+
+
+def flush_multiplier_for_target(value, target_is_dual_hotend: bool) -> list[str]:
+    """The flush multiplier in the shape and range the target expects.
+
+    It scales every entry of the purge matrix, so a missing or zero multiplier
+    is the whole matrix set to nothing -- which is what Bambu Studio reports as
+    "Partial purging volume set to 0. Multi-color printing may cause color
+    mixing in models."
+
+    It was being dropped as machine-owned, and nothing put it back: no Bambu
+    preset defines it, so there was no value to inherit either. Real files are
+    unambiguous about the shape -- a list with one entry per extruder, `["1"]`
+    on a single hotend and `["1", "1"]` on a dual -- while older projects,
+    Snapmaker's included, store a bare scalar.
+
+    A sensible multiplier from the source is kept: a user who set 0.6 meant it.
+    Zero, a negative, or anything unparseable falls back to 1, because carrying
+    a zero across would silently disable purging on a machine whose own files
+    never do that.
+    """
+    if isinstance(value, list):
+        value = value[0] if value else None
+
+    multiplier = _DEFAULT_FLUSH_MULTIPLIER
+    try:
+        if value is not None and float(value) > 0:
+            multiplier = str(value)
+    except (TypeError, ValueError):
+        pass
+
+    return [multiplier] * (2 if target_is_dual_hotend else 1)
+
+
 def _is_diagonal(index: int, n: int) -> bool:
     return index // n == index % n
 

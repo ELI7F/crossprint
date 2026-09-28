@@ -24,7 +24,7 @@ from convert.filament_variants import expand_per_variant_options
 from convert.layer_heights import clamp_layer_height_profile
 from convert.paint_transfer import remap_paint_colors
 from convert.plate_layout import bed_size, relayout_for_target_bed
-from convert.purge_matrix import reshape_purge_matrix
+from convert.purge_matrix import flush_multiplier_for_target, reshape_purge_matrix
 from convert.report import ChangeReport
 from convert.settings_diff import compute_different_settings_to_system
 from core.archive import PathOrStream, ThreeMFArchive
@@ -574,11 +574,19 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
     # own; it does not. Bambu Studio reports "Purge volumes matrix do not match
     # to the correct size!" and sets partial purging to zero, which means
     # colour bleeding into the model on every tool change.
+    target_is_dual = target != "u1" and hotend_class(target_machine) == "vortek"
     purge = reshape_purge_matrix(
         matrix=project.get("flush_volumes_matrix"),
         vector=project.get("flush_volumes_vector"),
         filament_count=result.filament_count,
-        target_is_dual_hotend=target != "u1" and hotend_class(target_machine) == "vortek",
+        target_is_dual_hotend=target_is_dual,
+    )
+
+    # The multiplier scales every entry of that matrix, so dropping it undoes
+    # the matrix entirely -- "Partial purging volume set to 0". No preset
+    # defines it, so nothing filled it back in. See convert/purge_matrix.py.
+    new_config["flush_multiplier"] = flush_multiplier_for_target(
+        project.get("flush_multiplier"), target_is_dual_hotend=target_is_dual
     )
     if purge.matrix:
         new_config["flush_volumes_matrix"] = purge.matrix

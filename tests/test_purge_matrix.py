@@ -89,3 +89,53 @@ def test_values_keep_their_integer_spelling():
     reads to the slicer as a user override."""
     result = reshape_purge_matrix(["0", "346.0", "208", "0"], None, 2, target_is_dual_hotend=False)
     assert result.matrix == ["0", "346", "208", "0"]
+
+
+# -- the multiplier ------------------------------------------------------
+#
+# It scales every entry of the matrix, so a missing or zero multiplier is the
+# whole matrix set to nothing. It was dropped as machine-owned and nothing put
+# it back, because no Bambu preset defines it either -- which is how a file
+# with a correct purge matrix still reported "Partial purging volume set to 0".
+
+
+def test_the_multiplier_is_one_entry_per_extruder():
+    from convert.purge_matrix import flush_multiplier_for_target
+
+    assert flush_multiplier_for_target("1", target_is_dual_hotend=False) == ["1"]
+    assert flush_multiplier_for_target("1", target_is_dual_hotend=True) == ["1", "1"]
+
+
+def test_a_sensible_multiplier_is_kept():
+    """A user who set 0.6 meant it."""
+    from convert.purge_matrix import flush_multiplier_for_target
+
+    assert flush_multiplier_for_target("0.6", target_is_dual_hotend=True) == ["0.6", "0.6"]
+    assert flush_multiplier_for_target(["0.5"], target_is_dual_hotend=False) == ["0.5"]
+
+
+def test_zero_does_not_survive_the_crossing():
+    """The source of the report carried 0. Every real Bambu project carries 1
+    and none carries 0, and a zero multiplier silently disables purging."""
+    from convert.purge_matrix import flush_multiplier_for_target
+
+    assert flush_multiplier_for_target("0", target_is_dual_hotend=True) == ["1", "1"]
+    assert flush_multiplier_for_target("-2", target_is_dual_hotend=False) == ["1"]
+    assert flush_multiplier_for_target(None, target_is_dual_hotend=False) == ["1"]
+    assert flush_multiplier_for_target("nonsense", target_is_dual_hotend=False) == ["1"]
+
+
+def test_a_real_conversion_carries_a_usable_multiplier():
+    import json
+
+    from convert.pipeline import convert
+
+    from .conftest import sample_path
+
+    archive, _ = convert(sample_path("u1_toucan_plus"), "h2c")
+    try:
+        config = json.loads(archive.get_text("Metadata/project_settings.config"))
+    finally:
+        archive.close()
+
+    assert config["flush_multiplier"] == ["1", "1"]
