@@ -88,7 +88,7 @@ def fill_missing_filament_defaults(
     out = dict(config)
     filled: list[str] = []
     for key in sorted(candidates):
-        if key in out:
+        if key in out and not _is_blank_gcode(key, out[key]):
             continue
         values = [_slot_value(flat.get(key)) for flat in per_slot]
         # A key no resolved preset actually defines has nothing to fill from.
@@ -98,6 +98,33 @@ def fill_missing_filament_defaults(
         filled.append(key)
 
     return FilamentDefaultsResult(config=out, filled=filled)
+
+
+def _is_blank_gcode(key: str, value) -> bool:
+    """An empty filament G-code field, which the target's own placeholder fills.
+
+    Bambu Studio compares each G-code field against the preset the project
+    names and, on any difference, shows:
+
+        Modified G-code -- The 3mf has following modified G-code in filament
+        or printer presets: -filament_start_gcode. Please confirm that these
+        modified G-codes are safe to prevent any damage to the machine!
+
+    Carrying an empty `filament_start_gcode` from a Snapmaker source into a
+    project naming a Bambu preset triggers exactly that. Nothing is wrong --
+    the preset's own value is the comment line "; filament start gcode", and
+    empty against a comment is a difference that executes nothing either way.
+    But a safety dialog on every single converted file teaches people to click
+    through safety dialogs, which is worse than the difference it reports.
+
+    Only blank values qualify. G-code the user actually wrote is theirs, and
+    replacing it with a vendor placeholder would be silently discarding
+    something that does run.
+    """
+    if not key.endswith("_gcode"):
+        return False
+    values = value if isinstance(value, list) else [value]
+    return all(v is None or not str(v).strip() for v in values)
 
 
 def _is_per_filament(key: str) -> bool:

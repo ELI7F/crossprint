@@ -103,3 +103,63 @@ def test_a_real_conversion_carries_the_purge_volume_the_warning_was_about():
     # one, even though most per-filament settings are stored per variant.
     assert len(config["filament_prime_volume"]) == n
     assert all(v not in ("", "0") for v in config["filament_prime_volume"])
+
+
+def test_a_blank_filament_gcode_takes_the_targets_placeholder():
+    """Bambu Studio compares every G-code field against the preset the project
+    names and shows a "Modified G-code ... confirm these are safe to prevent
+    any damage to the machine" dialog on any difference. A Snapmaker source
+    carries an empty filament_start_gcode; the Bambu preset's own value is the
+    comment "; filament start gcode". Empty against a comment executes nothing
+    either way, but a safety dialog on every converted file teaches people to
+    click through safety dialogs."""
+    result = fill_missing_filament_defaults(
+        {"filament_start_gcode": ["", ""]}, ["Bambu PLA Basic @BBL H2C"] * 2, BAMBU, 2
+    )
+
+    assert result.config["filament_start_gcode"] == ["; filament start gcode\n"] * 2
+    assert "filament_start_gcode" in result.filled
+
+
+def test_gcode_the_user_actually_wrote_is_never_replaced():
+    """It does run, and a vendor placeholder would silently discard it."""
+    mine = ["M106 S255", "M106 S255"]
+    result = fill_missing_filament_defaults(
+        {"filament_start_gcode": list(mine)}, ["Bambu PLA Basic @BBL H2C"] * 2, BAMBU, 2
+    )
+
+    assert result.config["filament_start_gcode"] == mine
+
+
+def test_only_gcode_fields_are_refilled_when_blank():
+    """An empty value elsewhere can be meaningful, so blankness alone is not
+    a reason to overwrite."""
+    result = fill_missing_filament_defaults(
+        {"filament_notes": [""]}, ["Bambu PLA Basic @BBL H2C"], BAMBU, 1
+    )
+    assert result.config["filament_notes"] == [""]
+
+
+def test_every_gcode_field_in_a_real_conversion_matches_its_preset():
+    """The whole point: no Modified G-code dialog."""
+    from convert.pipeline import _machine_preset_name
+    from core.preset_resolver import flatten
+
+    archive, _ = convert(sample_path("u1_toucan_plus"), "h2c")
+    try:
+        config = json.loads(archive.get_text("Metadata/project_settings.config"))
+    finally:
+        archive.close()
+
+    library = PresetLibrary(_vendor_dir("h2c"))
+    filament = flatten("filament", library.get("filament", config["filament_settings_id"][0]), library)
+    machine = flatten("machine", library.get("machine", _machine_preset_name("h2c")), library)
+
+    def first(value):
+        if isinstance(value, list):
+            value = value[0] if value else ""
+        return value or ""
+
+    for key in (k for k in config if k.endswith("_gcode")):
+        expected = filament.get(key) if key.startswith("filament_") else machine.get(key)
+        assert first(config[key]) == first(expected), key
