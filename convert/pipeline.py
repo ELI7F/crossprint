@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Iterable
 
 from convert.color_mapping import hotend_class, map_colors_to_bambu, map_colors_to_u1, remap_object_extruders
+from convert.filament_defaults import fill_missing_filament_defaults
 from convert.filament_mapping import map_filaments_to_target
 from convert.filament_slots import normalize_filament_slots
 from convert.filament_variants import expand_per_variant_options
@@ -364,6 +365,31 @@ def convert(source_path: PathOrStream, target: str) -> tuple[ThreeMFArchive, Con
         detail="A preset name the target doesn't know reads to it as a custom preset whose definition "
         "should be bundled in the project -- and conversion drops those bundles.",
     )
+
+    # A real project file is a flattened preset plus the user's overrides. A
+    # converted one carried only what the source happened to have, which left
+    # most of the target's filament keys absent -- and the slicer does not
+    # always fall back to the preset the project names. `filament_prime_volume`
+    # is the case that surfaced it: absent, Bambu Studio reads the partial
+    # purge volume as zero and warns about colour mixing. Runs before the
+    # per-variant expansion below so the values it adds are widened with
+    # everything else. See convert/filament_defaults.py.
+    defaults = fill_missing_filament_defaults(
+        new_config,
+        filament_settings_id=filament_mapping.filament_settings_id,
+        target_library=target_library,
+        filament_count=result.filament_count,
+    )
+    new_config = defaults.config
+    if defaults.filled:
+        result.report.add(
+            "filaments",
+            f"Filled {len(defaults.filled)} filament setting(s) from the target's own presets",
+            detail="The project had no value for these, so each slot takes the value of the preset it "
+            "now names. They are the preset's own values, so none of them is marked as a deviation -- "
+            "the file just stops being silent about settings it was always going to inherit.",
+            items=defaults.filled,
+        )
 
     # A dual-hotend target stores every per-filament setting once per extruder
     # variant. The source printer is single-variant, so its arrays are half the
